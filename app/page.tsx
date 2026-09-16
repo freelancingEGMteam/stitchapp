@@ -26,6 +26,7 @@ import {
   Shirt,
   Sparkles,
   Tag,
+  Trash2,
   UserRound,
   UsersRound,
   WalletCards,
@@ -74,6 +75,20 @@ const loadStoredWaitingList = (): WaitingEntry[] => {
     return raw ? JSON.parse(raw) as WaitingEntry[] : [];
   } catch {
     return [];
+  }
+};
+
+const defaultExpenseCategories = ["Supplies", "Fabric", "Equipment", "Rent & utilities", "Marketing", "Other"];
+
+const loadStoredCategories = (): string[] => {
+  if (typeof window === "undefined") return [...defaultExpenseCategories];
+  try {
+    const raw = window.localStorage.getItem("stitchflow-expense-categories");
+    const parsed = raw ? JSON.parse(raw) as unknown : null;
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((item) => typeof item === "string")) return parsed as string[];
+    return [...defaultExpenseCategories];
+  } catch {
+    return [...defaultExpenseCategories];
   }
 };
 
@@ -230,6 +245,41 @@ function EditLeadModal({ lead, onClose, onSave }: { lead: Lead; onClose: () => v
   return <EditModalShell title="Edit Lead" ariaLabel="edit lead" onClose={onClose} onSubmit={submit}><div className="modal-two"><div className="field"><label htmlFor="edit-lead-name">Name</label><input id="edit-lead-name" value={draft.name} onChange={(event) => update("name", event.target.value)} required /></div><div className="field"><label htmlFor="edit-lead-status">Status</label><select id="edit-lead-status" value={draft.status || "New"} onChange={(event) => update("status", event.target.value)}><option>New</option><option>Contacted</option><option>Qualified</option><option>Converted</option><option>Lost</option></select></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-lead-phone">Phone</label><input id="edit-lead-phone" value={draft.phone_number || ""} onChange={(event) => update("phone_number", event.target.value)} /></div><div className="field"><label htmlFor="edit-lead-email">Email</label><input id="edit-lead-email" type="email" value={draft.email || ""} onChange={(event) => update("email", event.target.value)} /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-lead-location">Location</label><input id="edit-lead-location" value={draft.location || ""} onChange={(event) => update("location", event.target.value)} /></div><div className="field"><label htmlFor="edit-lead-source">Source</label><select id="edit-lead-source" value={draft.source || "Other"} onChange={(event) => update("source", event.target.value)}><option>Phone</option><option>Facebook</option><option>Referral</option><option>Walk-in</option><option>Other</option></select></div></div><div className="field"><label htmlFor="edit-lead-interest">Interested in</label><textarea id="edit-lead-interest" value={draft.interested_in || ""} onChange={(event) => update("interested_in", event.target.value)} placeholder="Describe what they are looking for..." /></div><div className="field"><label htmlFor="edit-lead-notes">Notes</label><textarea id="edit-lead-notes" value={draft.notes || ""} onChange={(event) => update("notes", event.target.value)} placeholder="Add follow-up notes..." /></div></EditModalShell>;
 }
 
+function ManageCategoriesModal({ categories, expenses, onChange, onClose }: { categories: string[]; expenses: Expense[]; onChange: (next: string[]) => void; onClose: () => void }) {
+  const [draft, setDraft] = useState<string[]>(categories);
+  const [newName, setNewName] = useState("");
+  const usage = (name: string) => {
+    const rows = expenses.filter((expense) => (expense.category || "Other") === name);
+    return { count: rows.length, total: rows.reduce((sum, expense) => sum + numeric(expense.amount), 0) };
+  };
+  const add = () => {
+    const name = newName.trim();
+    if (!name) return;
+    setDraft((current) => current.some((item) => item.toLowerCase() === name.toLowerCase()) ? current : [...current, name]);
+    setNewName("");
+  };
+  const submit = (event: FormEvent) => { event.preventDefault(); onChange(draft); onClose(); };
+  return <EditModalShell title="Expense Categories" ariaLabel="manage expense categories" onClose={onClose} onSubmit={submit} submitLabel="Save categories">
+    <div className="guide-list">{draft.map((name) => {
+      const stats = usage(name);
+      return <div className="category-row" key={name}>
+        <div className="category-row-main">
+          <div className="row-title">{name}</div>
+          <div className="row-meta">{stats.count === 0 ? "Not used yet" : `${stats.count} expense${stats.count === 1 ? "" : "s"} · ${money(stats.total)}`}</div>
+        </div>
+        <button type="button" className="button small" disabled={draft.length <= 1} onClick={() => setDraft((current) => current.filter((item) => item !== name))} aria-label={`Remove ${name}`}><Trash2 size={13} /> Remove</button>
+      </div>;
+    })}</div>
+    <div className="field">
+      <label htmlFor="new-category">Add a category</label>
+      <div className="category-add">
+        <input id="new-category" value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }} placeholder="e.g. Dry cleaning" />
+        <button type="button" className="button" onClick={add}><Plus size={14} /> Add</button>
+      </div>
+    </div>
+  </EditModalShell>;
+}
+
 function EditAppointmentModal({ appointment, customers, onClose, onSave }: { appointment: Appointment; customers: Customer[]; onClose: () => void; onSave: (appointment: Appointment) => void }) {
   const [draft, setDraft] = useState<Appointment>({ ...appointment });
   const update = (key: keyof Appointment, value: string) => setDraft((current) => ({ ...current, [key]: value }));
@@ -238,11 +288,11 @@ function EditAppointmentModal({ appointment, customers, onClose, onSave }: { app
   return <EditModalShell title="Edit Appointment" ariaLabel="edit appointment" onClose={onClose} onSubmit={submit}><div className="field"><label htmlFor="edit-appointment-customer">Customer</label><input id="edit-appointment-customer" list="edit-appointment-customers" value={draft.linked_name || ""} onChange={(event) => updateCustomer(event.target.value)} placeholder="Search customers..." /><datalist id="edit-appointment-customers">{customers.map((customer) => <option key={customer.id} value={customer.customer_name}>{customer.phone_number || customer.email || ""}</option>)}</datalist></div><div className="field"><label htmlFor="edit-appointment-title">Appointment type</label><input id="edit-appointment-title" value={draft.title || ""} onChange={(event) => update("title", event.target.value)} required /></div><div className="modal-three"><div className="field"><label htmlFor="edit-appointment-date">Date</label><input id="edit-appointment-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div><div className="field"><label htmlFor="edit-appointment-time">Time</label><input id="edit-appointment-time" type="time" value={draft.time || ""} onChange={(event) => update("time", event.target.value)} /></div><div className="field"><label htmlFor="edit-appointment-status">Status</label><select id="edit-appointment-status" value={draft.status || "Scheduled"} onChange={(event) => update("status", event.target.value)}><option>Scheduled</option><option>Completed</option><option>Cancelled</option></select></div></div><div className="field"><label htmlFor="edit-appointment-notes">Notes</label><textarea id="edit-appointment-notes" value={draft.notes || ""} onChange={(event) => update("notes", event.target.value)} placeholder="Add appointment details..." /></div></EditModalShell>;
 }
 
-function EditExpenseModal({ expense, onClose, onSave }: { expense: Expense; onClose: () => void; onSave: (expense: Expense) => void }) {
+function EditExpenseModal({ expense, categories, onClose, onSave }: { expense: Expense; categories: string[]; onClose: () => void; onSave: (expense: Expense) => void }) {
   const [draft, setDraft] = useState<Expense>({ ...expense });
   const update = (key: keyof Expense, value: string | number) => setDraft((current) => ({ ...current, [key]: value }));
   const submit = (event: FormEvent) => { event.preventDefault(); onSave(draft); };
-  return <EditModalShell title="Edit Expense" ariaLabel="edit expense" onClose={onClose} onSubmit={submit}><div className="field"><label htmlFor="edit-expense-note">Description</label><input id="edit-expense-note" value={draft.note || ""} onChange={(event) => update("note", event.target.value)} required /></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-amount">Amount</label><input id="edit-expense-amount" type="number" min="0.01" step="0.01" value={draft.amount ?? ""} onChange={(event) => update("amount", event.target.value)} required /></div><div className="field"><label htmlFor="edit-expense-date">Date</label><input id="edit-expense-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-category">Category</label><select id="edit-expense-category" value={draft.category || "Other"} onChange={(event) => update("category", event.target.value)}><option>Supplies</option><option>Fabric</option><option>Equipment</option><option>Rent &amp; utilities</option><option>Marketing</option><option>Other</option></select></div><div className="field"><label htmlFor="edit-expense-job">Job ID</label><input id="edit-expense-job" value={draft.job_id || ""} onChange={(event) => update("job_id", event.target.value)} placeholder="Optional job ID" /></div></div></EditModalShell>;
+  return <EditModalShell title="Edit Expense" ariaLabel="edit expense" onClose={onClose} onSubmit={submit}><div className="field"><label htmlFor="edit-expense-note">Description</label><input id="edit-expense-note" value={draft.note || ""} onChange={(event) => update("note", event.target.value)} required /></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-amount">Amount</label><input id="edit-expense-amount" type="number" min="0.01" step="0.01" value={draft.amount ?? ""} onChange={(event) => update("amount", event.target.value)} required /></div><div className="field"><label htmlFor="edit-expense-date">Date</label><input id="edit-expense-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-category">Category</label><select id="edit-expense-category" value={draft.category || "Other"} onChange={(event) => update("category", event.target.value)}>{Array.from(new Set([...categories, draft.category || "Other"])).map((name) => <option key={name}>{name}</option>)}</select></div><div className="field"><label htmlFor="edit-expense-job">Job ID</label><input id="edit-expense-job" value={draft.job_id || ""} onChange={(event) => update("job_id", event.target.value)} placeholder="Optional job ID" /></div></div></EditModalShell>;
 }
 
 function EditWaitingModal({ entry, customers, onClose, onSave }: { entry: WaitingEntry; customers: Customer[]; onClose: () => void; onSave: (entry: WaitingEntry) => void }) {
@@ -460,12 +510,27 @@ function FinanceChart({ data }: { data: AppData }) {
   </div>;
 }
 
-function FinancesView({ data, go, onEditExpense }: { data: AppData; go: (view: View) => void; onEditExpense: (expense: Expense) => void }) {
+function FinancesView({ data, go, onEditExpense, onManageCategories, toast }: { data: AppData; go: (view: View) => void; onEditExpense: (expense: Expense) => void; onManageCategories: () => void; toast: (message: string) => void }) {
   const revenue = data.jobs.filter((job) => (job.status || "").toLowerCase() === "paid").reduce((sum, job) => sum + numeric(job.amount_to_charge), 0);
   const expenses = data.expenses.reduce((sum, expense) => sum + numeric(expense.amount), 0);
   const netProfit = revenue - expenses;
   const generated = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric" }).format(new Date());
-  return <><div className="page-heading"><div><h1>Balance Sheet</h1><p>All Time · Generated {generated}</p></div><button className="button primary" onClick={() => go("new-expense")}><Plus size={15} /> Add Expense</button></div><div className="grid-2"><div className="card"><div className="eyebrow">Total Revenue</div><div className="metric-value">{money(revenue)}</div><div className="stat-line"><span>Total Expenses</span><strong>{money(expenses)}</strong></div><div className="stat-line net"><span>Net Profit</span><strong>{money(netProfit)}</strong></div></div><div className="card"><h3>Quick actions</h3><button className="button" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}><span><FileDown size={15} /> Export financials</span><ArrowUpRight size={14} /></button><button className="button" style={{ width: "100%", justifyContent: "space-between" }}><span><Tag size={15} /> Manage categories</span><ArrowUpRight size={14} /></button></div></div><section className="section"><SectionHeading title="Revenue vs Expenses" /><FinanceChart data={data} /></section><section className="section"><SectionHeading title="Recent Expenses" /><div className="stack">{data.expenses.length === 0 ? <div className="empty">No expenses recorded.</div> : data.expenses.map((expense) => <div className="expense-row" key={expense.id}><div className="metric-icon rose"><CircleDollarSign size={15} /></div><div className="expense-row-main"><div className="row-title">{expense.note || "Expense"}</div><div className="row-meta">{shortDate(expense.date)} · {expense.category || "Other"}</div></div><strong>{money(expense.amount)}</strong><button className="button small" aria-label={`Edit ${expense.note || "expense"}`} onClick={() => onEditExpense(expense)}><Pencil size={13} /> Edit</button></div>)}</div></section></>;
+  const exportFinancials = () => {
+    const rows: string[][] = [["Month", "Revenue", "Expenses", "Net"]];
+    monthlySeries(data).forEach((point) => rows.push([point.month, point.revenue.toFixed(2), point.expenses.toFixed(2), (point.revenue - point.expenses).toFixed(2)]));
+    rows.push([], ["Total Revenue", revenue.toFixed(2)], ["Total Expenses", expenses.toFixed(2)], ["Net Profit", netProfit.toFixed(2)]);
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `balance-sheet-all-time-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast("Balance sheet exported as CSV.");
+  };
+  return <><div className="page-heading"><div><h1>Balance Sheet</h1><p>All Time · Generated {generated}</p></div><button className="button primary" onClick={() => go("new-expense")}><Plus size={15} /> Add Expense</button></div><div className="grid-2"><div className="card"><div className="eyebrow">Total Revenue</div><div className="metric-value">{money(revenue)}</div><div className="stat-line"><span>Total Expenses</span><strong>{money(expenses)}</strong></div><div className="stat-line net"><span>Net Profit</span><strong>{money(netProfit)}</strong></div></div><div className="card"><h3>Quick actions</h3><button className="button" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }} onClick={exportFinancials}><span><FileDown size={15} /> Export financials</span><ArrowUpRight size={14} /></button><button className="button" style={{ width: "100%", justifyContent: "space-between" }} onClick={onManageCategories}><span><Tag size={15} /> Manage categories</span><ArrowUpRight size={14} /></button></div></div><section className="section"><SectionHeading title="Revenue vs Expenses" /><FinanceChart data={data} /></section><section className="section"><SectionHeading title="Recent Expenses" /><div className="stack">{data.expenses.length === 0 ? <div className="empty">No expenses recorded.</div> : data.expenses.map((expense) => <div className="expense-row" key={expense.id}><div className="metric-icon rose"><CircleDollarSign size={15} /></div><div className="expense-row-main"><div className="row-title">{expense.note || "Expense"}</div><div className="row-meta">{shortDate(expense.date)} · {expense.category || "Other"}</div></div><strong>{money(expense.amount)}</strong><button className="button small" aria-label={`Edit ${expense.note || "expense"}`} onClick={() => onEditExpense(expense)}><Pencil size={13} /> Edit</button></div>)}</div></section></>;
 }
 
 function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry[]; customers: Customer[]; go: (view: View) => void; onEdit: (entry: WaitingEntry) => void }) {
@@ -473,7 +538,7 @@ function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry
 }
 
 function TeamView() {
-  return <><div className="page-heading"><div><h1>Team</h1><p>People who keep Rachel&apos;s Seamstress Studio moving.</p></div><button className="button primary"><Plus size={15} /> Invite member</button></div><div className="grid-2"><div className="card"><div className="avatar">RV</div><h3 style={{ marginTop: 12 }}>Rachel Valenzuela</h3><div className="muted">Owner · Studio manager</div><div className="stat-line" style={{ marginTop: 14 }}><span>Access</span><strong>Admin</strong></div></div><div className="card"><div className="avatar green">AS</div><h3 style={{ marginTop: 12 }}>Alterations team</h3><div className="muted">Shared workspace</div><div className="stat-line" style={{ marginTop: 14 }}><span>Open jobs</span><strong>3</strong></div></div></div></>;
+  return <><div className="page-heading"><div><h1>Team</h1><p>People who keep Rachel&apos;s Seamstress Studio moving.</p></div></div><div className="grid-2"><div className="card"><div className="avatar">RV</div><h3 style={{ marginTop: 12 }}>Rachel Valenzuela</h3><div className="muted">Owner · Studio manager</div><div className="stat-line" style={{ marginTop: 14 }}><span>Access</span><strong>Admin</strong></div></div><div className="card"><div className="avatar green">AS</div><h3 style={{ marginTop: 12 }}>Alterations team</h3><div className="muted">Shared workspace</div><div className="stat-line" style={{ marginTop: 14 }}><span>Open jobs</span><strong>3</strong></div></div></div></>;
 }
 
 function LifecycleView({ data, onEdit }: { data: AppData; onEdit: (record: Lifecycle) => void }) {
@@ -500,17 +565,17 @@ function NewJobView({ data, onCreate, go, initialCustomer }: { data: AppData; on
   return <><div className="page-heading"><div><h1>Add Job</h1><p>Capture the work, price, and pickup date in one place.</p></div><button className="button" onClick={() => go("jobs")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field"><label htmlFor="customer">Customer</label><input id="customer" list="job-customers" value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Search customers..." required /><datalist id="job-customers">{data.customers.map((customer) => <option key={customer.id} value={customer.customer_name}>{customer.phone_number || customer.email || ""}</option>)}</datalist>{selectedCustomer && <div className="autocomplete-meta">{selectedCustomer.phone_number || "No phone"}{selectedCustomer.email ? ` · ${selectedCustomer.email}` : ""}{selectedCustomer.address ? ` · ${selectedCustomer.address}` : ""}</div>}</div><div className="field"><label htmlFor="status">Status</label><select id="status" value={status} onChange={(event) => setStatus(event.target.value)}><option>New Job</option><option>In Progress</option><option>Ready for Pickup</option><option>Delivered</option><option>Paid</option></select></div><div className="field full"><label htmlFor="details">Job details</label><textarea id="details" value={details} onChange={(event) => setDetails(event.target.value)} placeholder="Describe the alterations or project..." required /></div><div className="field"><label htmlFor="amount">Amount to charge</label><input id="amount" type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></div><div className="field"><label htmlFor="delivery">Delivery date</label><input id="delivery" type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} /></div><div className="field"><label htmlFor="payment">Payment method</label><select id="payment" value={payment} onChange={(event) => setPayment(event.target.value)}><option>Cash</option><option>Card</option><option>Check</option><option>Venmo</option><option>Other</option></select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("jobs")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Job</button></div></form></>;
 }
 
-function NewExpenseView({ onCreate, go }: { onCreate: (expense: Expense) => void; go: (view: View) => void }) {
+function NewExpenseView({ categories, onCreate, go }: { categories: string[]; onCreate: (expense: Expense) => void; go: (view: View) => void }) {
   const [note, setNote] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [category, setCategory] = useState("Supplies");
+  const [category, setCategory] = useState(() => categories[0] || "Other");
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onCreate({ id: `local-expense-${Date.now()}`, note, amount: Number(amount), date, category });
     go("finances");
   };
-  return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}><option>Supplies</option><option>Fabric</option><option>Equipment</option><option>Rent &amp; utilities</option><option>Marketing</option><option>Other</option></select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Expense</button></div></form></>;
+  return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((name) => <option key={name}>{name}</option>)}</select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Expense</button></div></form></>;
 }
 
 function NewLeadView({ data, onCreate, go }: { data: AppData; onCreate: (lead: Lead) => void; go: (view: View) => void }) {
@@ -572,6 +637,8 @@ export default function Home() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingWaiting, setEditingWaiting] = useState<WaitingEntry | null>(null);
   const [editingLifecycle, setEditingLifecycle] = useState<Lifecycle | null>(null);
+  const [expenseCategories, setExpenseCategories] = useState<string[]>(() => loadStoredCategories());
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
 
   useEffect(() => {
     if (!supabase) return;
@@ -595,10 +662,11 @@ export default function Home() {
     try {
       window.localStorage.setItem("stitchflow-data", JSON.stringify(data));
       window.localStorage.setItem("stitchflow-waiting-list", JSON.stringify(waitingList));
+      window.localStorage.setItem("stitchflow-expense-categories", JSON.stringify(expenseCategories));
     } catch {
       // Storage is optional; the in-memory workspace still remains usable.
     }
-  }, [data, waitingList]);
+  }, [data, waitingList, expenseCategories]);
 
   const go = (next: View) => { setView(next); setDetail(null); setNewJobCustomer(null); setNewAppointmentCustomer(null); setSearchOpen(false); setMobileMenuOpen(false); setGlobalQuery(""); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const openCustomer = (customer: Customer) => { setView("customers"); setDetail({ type: "customer", id: customer.id }); window.scrollTo({ top: 0, behavior: "smooth" }); };
@@ -689,12 +757,12 @@ export default function Home() {
       {view === "leads" && selectedLead ? <LeadDetailView lead={selectedLead} onBack={closeDetail} onEdit={setEditingLead} /> : null}
       {view === "leads" && (!detail || detail.type !== "lead") && <LeadsView data={data} go={go} onSelect={openLead} onEdit={setEditingLead} />}
       {view === "appointments" && <AppointmentsView data={data} go={go} onComplete={completeAppointment} onEdit={setEditingAppointment} />}
-      {view === "finances" && <FinancesView data={data} go={go} onEditExpense={setEditingExpense} />}
+      {view === "finances" && <FinancesView data={data} go={go} onEditExpense={setEditingExpense} toast={toast} onManageCategories={() => setCategoriesOpen(true)} />}
       {view === "waiting" && <WaitingView entries={waitingList} customers={data.customers} go={go} onEdit={setEditingWaiting} />}
       {view === "team" && <TeamView />}
       {view === "lifecycle" && <LifecycleView data={data} onEdit={setEditingLifecycle} />}
       {view === "new-job" && <NewJobView data={data} onCreate={createJob} go={go} initialCustomer={newJobCustomer} />}
-      {view === "new-expense" && <NewExpenseView onCreate={createExpense} go={go} />}
+      {view === "new-expense" && <NewExpenseView categories={expenseCategories} onCreate={createExpense} go={go} />}
       {view === "new-waiting" && <NewWaitingView customers={data.customers} onCreate={createWaitingEntry} go={go} />}
       {view === "new-appointment" && <NewAppointmentView data={data} onCreate={createAppointment} go={go} initialCustomer={newAppointmentCustomer} />}
       {view === "new-lead" && <NewLeadView data={data} onCreate={createLead} go={go} />}
@@ -703,7 +771,8 @@ export default function Home() {
     {editingJob && <EditJobModal job={editingJob} customers={data.customers} onClose={() => setEditingJob(null)} onSave={updateJob} />}
     {editingLead && <EditLeadModal lead={editingLead} onClose={() => setEditingLead(null)} onSave={updateLead} />}
     {editingAppointment && <EditAppointmentModal appointment={editingAppointment} customers={data.customers} onClose={() => setEditingAppointment(null)} onSave={updateAppointment} />}
-    {editingExpense && <EditExpenseModal expense={editingExpense} onClose={() => setEditingExpense(null)} onSave={updateExpense} />}
+    {editingExpense && <EditExpenseModal expense={editingExpense} categories={expenseCategories} onClose={() => setEditingExpense(null)} onSave={updateExpense} />}
+    {categoriesOpen && <ManageCategoriesModal categories={expenseCategories} expenses={data.expenses} onChange={setExpenseCategories} onClose={() => setCategoriesOpen(false)} />}
     {editingWaiting && <EditWaitingModal entry={editingWaiting} customers={data.customers} onClose={() => setEditingWaiting(null)} onSave={updateWaiting} />}
     {editingLifecycle && <EditLifecycleModal record={editingLifecycle} onClose={() => setEditingLifecycle(null)} onSave={updateLifecycle} />}
     {searchOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSearchOpen(false)}><div className="modal" role="dialog" aria-modal="true" aria-label="Search your studio"><div className="modal-heading"><h2>Search your studio</h2><button className="icon-button" aria-label="Close search" onClick={() => setSearchOpen(false)}><X size={18} /></button></div><SearchBox value={globalQuery} onChange={setGlobalQuery} placeholder="Search customers, jobs, or leads..." />{globalQuery && <div className="search-results" style={{ marginTop: 12 }}>{searchResults.length === 0 ? <div className="empty">No matches found.</div> : searchResults.map((result, index) => <button className="search-result" key={`${result.type}-${result.title}-${index}`} onClick={() => { setSearchOpen(false); setGlobalQuery(""); if (result.type === "Customer") openCustomer(data.customers.find((item) => item.id === result.id) || data.customers[0]); else if (result.type === "Job") openJob(data.jobs.find((item) => item.id === result.id) || data.jobs[0]); else openLead(data.leads.find((item) => item.id === result.id) || data.leads[0]); }}><div className="avatar">{initials(result.title)}</div><div><div className="row-title">{result.title}</div><small>{result.type} · {result.detail}</small></div></button>)}</div>}</div></div>}

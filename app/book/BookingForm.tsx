@@ -66,6 +66,10 @@ export default function BookingForm() {
     [slots, booked, day, now],
   );
 
+  const notesCopy = kind === "Pick up"
+    ? { label: "What are you picking up?", placeholder: "e.g. the blue dress I dropped off on Tuesday" }
+    : { label: "What are you bringing?", placeholder: "e.g. 2 pairs of trousers to hem, one dress to take in" };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError("");
@@ -169,8 +173,8 @@ export default function BookingForm() {
           <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
         </label>
         <label className="booking-field full">
-          <span>What are you bringing?</span>
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. 2 pairs of trousers to hem, one dress to take in" />
+          <span>{notesCopy.label}</span>
+          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={notesCopy.placeholder} />
         </label>
       </div>
     </div>

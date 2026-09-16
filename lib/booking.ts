@@ -1,6 +1,6 @@
-export type BookingKind = "Drop off" | "Pick up" | "Fitting";
+export type BookingKind = "Drop off" | "Pick up";
 
-export const bookingKinds: BookingKind[] = ["Drop off", "Pick up", "Fitting"];
+export const bookingKinds: BookingKind[] = ["Drop off", "Pick up"];
 
 /**
  * Studio booking rules. Slot times are the studio's own wall-clock times;

@@ -46,6 +46,33 @@ type GoogleMaps = {
   };
 };
 
+type Suggestion = { label: string; lat: number; lon: number };
+
+type PhotonFeature = {
+  properties?: Record<string, string | undefined>;
+  geometry?: { coordinates?: number[] };
+};
+
+/**
+ * Keyless address suggestions from Photon (OpenStreetMap), used when no
+ * Google Maps key is configured. Results are biased towards the studio so
+ * nearby addresses come first.
+ */
+const photonLookup = async (query: string, signal: AbortSignal): Promise<Suggestion[]> => {
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}`
+    + `&lat=${serviceArea.lat}&lon=${serviceArea.lng}&limit=5&lang=en`;
+  const response = await fetch(url, { signal });
+  const data = await response.json() as { features?: PhotonFeature[] };
+  return (data.features || []).map((feature) => {
+    const p = feature.properties || {};
+    const street = [p.housenumber, p.street].filter(Boolean).join(" ") || p.name || "";
+    const label = [street, p.city || p.town || p.village, p.state, p.postcode].filter(Boolean).join(", ");
+    const point = feature.geometry?.coordinates;
+    if (!label || !point || point.length < 2) return null;
+    return { label, lat: point[1], lon: point[0] };
+  }).filter((item): item is Suggestion => item !== null);
+};
+
 export default function BookingForm() {
   // Dates resolve on the client only. Rendering them during SSR would produce
   // a different calendar on the server than in the browser and trip a
@@ -63,8 +90,11 @@ export default function BookingForm() {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locationNote, setLocationNote] = useState("");
   const [mapsReady, setMapsReady] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const autocompleteRef = useRef<GoogleAutocomplete | null>(null);
+  const skipLookupRef = useRef(false);
   const [booked, setBooked] = useState<Set<string>>(new Set());
   const [loadingSlots, setLoadingSlots] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -160,6 +190,41 @@ export default function BookingForm() {
     autocompleteRef.current = autocomplete;
   }, [mapsReady]);
 
+  // Keyless suggestions. Skipped entirely when Google is driving the field.
+  useEffect(() => {
+    if (MAPS_KEY) return;
+    if (skipLookupRef.current) { skipLookupRef.current = false; return; }
+    const query = location.trim();
+    if (query.length < 4) { setSuggestions([]); setActiveIndex(-1); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        setSuggestions(await photonLookup(query, controller.signal));
+        setActiveIndex(-1);
+      } catch {
+        // Aborted, or the lookup service is unreachable. Keep what was typed.
+      }
+    }, 300);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [location]);
+
+  const chooseSuggestion = (suggestion: Suggestion) => {
+    skipLookupRef.current = true;
+    setLocation(suggestion.label);
+    setCoords({ lat: suggestion.lat, lng: suggestion.lon });
+    setLocationNote(withinServiceArea(suggestion.lat, suggestion.lon) ? "inside" : outsideAreaMessage(suggestion.lat, suggestion.lon));
+    setSuggestions([]);
+    setActiveIndex(-1);
+  };
+
+  const onAddressKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (suggestions.length === 0) return;
+    if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => (index + 1) % suggestions.length); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length); }
+    else if (event.key === "Enter" && activeIndex >= 0) { event.preventDefault(); chooseSuggestion(suggestions[activeIndex]); }
+    else if (event.key === "Escape") { setSuggestions([]); setActiveIndex(-1); }
+  };
+
   const available = useMemo(
     () => slots.filter((time) => now && day && isSlotAvailable(day, time, booked, now)),
     [slots, booked, day, now],
@@ -174,7 +239,6 @@ export default function BookingForm() {
     setError("");
     if (!slot) { setError("Please choose a time slot."); return; }
     if (!location.trim()) { setError("Please add the address for this booking."); return; }
-    if (MAPS_KEY && !coords) { setError("Please choose your address from the suggestions so we can check it is inside our travel area."); return; }
     if (coords && !withinServiceArea(coords.lat, coords.lng)) { setError(outsideAreaMessage(coords.lat, coords.lng)); return; }
     if (!supabase) { setError("Online booking is not connected yet. Please call the studio to arrange a time."); return; }
     setSubmitting(true);
@@ -305,24 +369,43 @@ export default function BookingForm() {
         <span>{kind}</span><span>·</span><span>{prettyDayLong(day)}</span><span>·</span><span>{formatSlot(slot)}</span>
       </div>
       <div className="booking-fields">
-        <label className="booking-field full">
-          <span>{kind === "Pick up" ? "Where should we collect from?" : "Your address"}</span>
-          <input
-            id="booking-location"
-            ref={addressRef}
-            value={location}
-            autoComplete="off"
-            placeholder="Start typing your street address…"
-            onChange={(event) => { setLocation(event.target.value); setCoords(null); setLocationNote(""); }}
-            required
-          />
+        <div className="booking-field full">
+          <label htmlFor="booking-location">{kind === "Pick up" ? "Where should we collect from?" : "Your address"}</label>
+          <div className="booking-address">
+            <input
+              id="booking-location"
+              ref={addressRef}
+              value={location}
+              autoComplete="off"
+              placeholder="Start typing your street address…"
+              role="combobox"
+              aria-expanded={suggestions.length > 0}
+              aria-autocomplete="list"
+              aria-controls="booking-address-list"
+              aria-activedescendant={activeIndex >= 0 ? `booking-address-${activeIndex}` : undefined}
+              onChange={(event) => { setLocation(event.target.value); setCoords(null); setLocationNote(""); }}
+              onKeyDown={onAddressKeyDown}
+              onBlur={() => window.setTimeout(() => { setSuggestions([]); setActiveIndex(-1); }, 140)}
+              required
+            />
+            {suggestions.length > 0 && <ul className="booking-suggest" id="booking-address-list" role="listbox">
+              {suggestions.map((suggestion, index) => <li
+                key={`${suggestion.label}-${index}`}
+                id={`booking-address-${index}`}
+                role="option"
+                aria-selected={index === activeIndex}
+                className={index === activeIndex ? "active" : undefined}
+                onMouseEnter={() => setActiveIndex(index)}
+                onMouseDown={(event) => { event.preventDefault(); chooseSuggestion(suggestion); }}
+              >{suggestion.label}</li>)}
+            </ul>}
+          </div>
           <em className="booking-hint">
-            We travel {travelAreaLabel()}.
-            {MAPS_KEY ? " Pick your address from the list so we can check it is in range." : ""}
+            We travel {travelAreaLabel()}. Pick your address from the suggestions so we can check it.
           </em>
           {locationNote === "inside" && <span className="booking-area ok"><CheckCircle2 size={14} /> That address is inside our travel area.</span>}
           {locationNote && locationNote !== "inside" && <span className="booking-area bad"><MapPin size={14} /> {locationNote}</span>}
-        </label>
+        </div>
         <label className="booking-field"><span>Name</span>
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" required /></label>
         <label className="booking-field"><span>Phone</span>

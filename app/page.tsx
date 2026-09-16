@@ -40,7 +40,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import SignIn from "./SignIn";
 
-type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "bookings" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead" | "new-customer";
+type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "bookings" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead";
 type WaitingEntry = { id: string; name: string; contact?: string; request: string; notes?: string; addedDate: string };
 
 type NavItem = { key: View; label: string; icon: LucideIcon };
@@ -232,6 +232,16 @@ function EditCustomerModal({ customer, onClose, onSave }: { customer: Customer; 
   return <EditModalShell title="Edit Customer" ariaLabel="edit customer" onClose={onClose} onSubmit={submit}><div className="modal-two"><div className="field"><label htmlFor="edit-customer-name">Customer name</label><input id="edit-customer-name" value={draft.customer_name} onChange={(event) => update("customer_name", event.target.value)} required /></div><div className="field"><label htmlFor="edit-customer-phone">Phone</label><input id="edit-customer-phone" value={draft.phone_number || ""} onChange={(event) => update("phone_number", event.target.value)} /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-customer-email">Email</label><input id="edit-customer-email" type="email" value={draft.email || ""} onChange={(event) => update("email", event.target.value)} /></div><div className="field"><label htmlFor="edit-customer-source">Source</label><select id="edit-customer-source" value={draft.source || "Other"} onChange={(event) => update("source", event.target.value)}><option>Walk-in</option><option>Phone</option><option>Facebook</option><option>Referral</option><option>Other</option></select></div></div><div className="field"><label htmlFor="edit-customer-address">Address</label><input id="edit-customer-address" value={draft.address || ""} onChange={(event) => update("address", event.target.value)} /></div><div className="field"><label htmlFor="edit-customer-referred">Referred by</label><input id="edit-customer-referred" value={draft.referred_by || ""} onChange={(event) => update("referred_by", event.target.value)} /></div><div className="field"><label htmlFor="edit-customer-notes">Notes</label><textarea id="edit-customer-notes" value={draft.notes || ""} onChange={(event) => update("notes", event.target.value)} placeholder="Add customer notes..." /></div></EditModalShell>;
 }
 
+function NewCustomerModal({ onClose, onSave }: { onClose: () => void; onSave: (customer: Customer) => void }) {
+  const [draft, setDraft] = useState<Customer>({ id: "", customer_name: "", source: "Walk-in" });
+  const update = (key: keyof Customer, value: string) => setDraft((current) => ({ ...current, [key]: value }));
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    onSave({ ...draft, id: `local-customer-${Date.now()}`, created_date: new Date().toISOString() });
+  };
+  return <EditModalShell title="Add Customer" ariaLabel="add customer" onClose={onClose} onSubmit={submit} submitLabel="Add customer"><div className="modal-two"><div className="field"><label htmlFor="new-customer-name">Customer name</label><input id="new-customer-name" value={draft.customer_name} onChange={(event) => update("customer_name", event.target.value)} placeholder="Full name" required autoFocus /></div><div className="field"><label htmlFor="new-customer-phone">Phone</label><input id="new-customer-phone" value={draft.phone_number || ""} onChange={(event) => update("phone_number", event.target.value)} placeholder="(555) 123-4567" /></div></div><div className="modal-two"><div className="field"><label htmlFor="new-customer-email">Email</label><input id="new-customer-email" type="email" value={draft.email || ""} onChange={(event) => update("email", event.target.value)} placeholder="name@example.com" /></div><div className="field"><label htmlFor="new-customer-source">Source</label><select id="new-customer-source" value={draft.source || "Walk-in"} onChange={(event) => update("source", event.target.value)}><option>Walk-in</option><option>Phone</option><option>Facebook</option><option>Referral</option><option>Other</option></select></div></div><div className="field"><label htmlFor="new-customer-address">Address</label><input id="new-customer-address" value={draft.address || ""} onChange={(event) => update("address", event.target.value)} placeholder="Street, town, ZIP" /></div><div className="field"><label htmlFor="new-customer-referred">Referred by</label><input id="new-customer-referred" value={draft.referred_by || ""} onChange={(event) => update("referred_by", event.target.value)} placeholder="Optional" /></div><div className="field"><label htmlFor="new-customer-notes">Notes</label><textarea id="new-customer-notes" value={draft.notes || ""} onChange={(event) => update("notes", event.target.value)} placeholder="Add customer notes..." /></div></EditModalShell>;
+}
+
 function EditJobModal({ job, customers, onClose, onSave }: { job: Job; customers: Customer[]; onClose: () => void; onSave: (job: Job) => void }) {
   const [draft, setDraft] = useState<Job>({ ...job });
   const update = (key: keyof Job, value: string | number) => setDraft((current) => ({ ...current, [key]: value }));
@@ -328,10 +338,10 @@ function JobsView({ data, go, toast, onSelect, onEdit }: { data: AppData; go: (v
   return <><div className="page-heading"><div><h1>Jobs</h1><p>Track every alteration from intake to pickup.</p></div><div className="page-heading-actions"><button className="button primary" onClick={() => go("new-job")}><Plus size={15} /> New Job</button></div></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search by name or job details..." /><div className="filter-strip">{filters.map((item) => <button key={item} className={`filter-button ${filter === item ? "active" : ""}`} onClick={() => setFilter(item)}>{item}</button>)}</div></div><div className="stack">{jobs.length === 0 ? <div className="empty">No jobs match your search.</div> : jobs.map((job) => <JobRow key={job.id} job={job} onSelect={onSelect} onEdit={onEdit} onSendQuote={(selected) => setQuoteJob(selected)} onExportInvoice={(selected) => setInvoiceJob(selected)} />)}</div>{quoteJob && <QuoteModal job={quoteJob} customer={customerFor(quoteJob)} onClose={() => setQuoteJob(null)} />}{invoiceJob && <InvoiceModal job={invoiceJob} customer={customerFor(invoiceJob)} onClose={() => setInvoiceJob(null)} />}</>;
 }
 
-function CustomersView({ data, go, onSelect, onEdit }: { data: AppData; go: (view: View) => void; onSelect: (customer: Customer) => void; onEdit: (customer: Customer) => void }) {
+function CustomersView({ data, go, onSelect, onEdit, onNew }: { data: AppData; go: (view: View) => void; onSelect: (customer: Customer) => void; onEdit: (customer: Customer) => void; onNew: () => void }) {
   const [query, setQuery] = useState("");
   const customers = data.customers.filter((customer) => `${customer.customer_name} ${customer.phone_number || ""} ${customer.email || ""} ${customer.address || ""}`.toLowerCase().includes(query.toLowerCase()));
-  return <><div className="page-heading"><div><h1>Customers</h1><p>Your customer book, ready for the next fitting.</p></div><button className="button primary" onClick={() => go("new-customer")}><Plus size={15} /> New Customer</button></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search customers..." /></div><div className="stack">{customers.length === 0 ? <div className="empty">No customers match your search.</div> : customers.map((customer) => <div key={customer.id} className="customer-row clickable" role="button" tabIndex={0} onClick={() => onSelect(customer)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(customer); } }}><div className="avatar">{initials(customer.customer_name)}</div><div className="customer-row-main"><div className="row-title">{customer.customer_name}</div><div className="row-meta">{customer.phone_number || "No phone"}{customer.address ? ` · ${customer.address}` : ""}</div></div><div className="row-actions"><span className="badge info">{customer.source || "Customer"}</span><button className="button small row-edit-button" aria-label={`Edit ${customer.customer_name}`} onClick={(event) => { event.stopPropagation(); onEdit(customer); }}><Pencil size={13} /> Edit</button><ChevronRight size={16} className="muted" /></div></div>)}</div></>;
+  return <><div className="page-heading"><div><h1>Customers</h1><p>Your customer book, ready for the next fitting.</p></div><button className="button primary" onClick={onNew}><Plus size={15} /> New Customer</button></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search customers..." /></div><div className="stack">{customers.length === 0 ? <div className="empty">No customers match your search.</div> : customers.map((customer) => <div key={customer.id} className="customer-row clickable" role="button" tabIndex={0} onClick={() => onSelect(customer)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(customer); } }}><div className="avatar">{initials(customer.customer_name)}</div><div className="customer-row-main"><div className="row-title">{customer.customer_name}</div><div className="row-meta">{customer.phone_number || "No phone"}{customer.address ? ` · ${customer.address}` : ""}</div></div><div className="row-actions"><span className="badge info">{customer.source || "Customer"}</span><button className="button small row-edit-button" aria-label={`Edit ${customer.customer_name}`} onClick={(event) => { event.stopPropagation(); onEdit(customer); }}><Pencil size={13} /> Edit</button><ChevronRight size={16} className="muted" /></div></div>)}</div></>;
 }
 
 function LeadsView({ data, go, onSelect, onEdit }: { data: AppData; go: (view: View) => void; onSelect: (lead: Lead) => void; onEdit: (lead: Lead) => void }) {
@@ -761,37 +771,6 @@ function NewExpenseView({ categories, onCreate, go }: { categories: string[]; on
   return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((name) => <option key={name}>{name}</option>)}</select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Expense</button></div></form></>;
 }
 
-function NewCustomerView({ onCreate, go, onAddJob }: { onCreate: (customer: Customer) => void; go: (view: View) => void; onAddJob: (customer: Customer) => void }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [address, setAddress] = useState("");
-  const [source, setSource] = useState("Walk-in");
-  const [referredBy, setReferredBy] = useState("");
-  const [notes, setNotes] = useState("");
-
-  const build = (): Customer => ({
-    id: `local-customer-${Date.now()}`,
-    customer_name: name.trim(),
-    phone_number: phone.trim(),
-    email: email.trim(),
-    address: address.trim(),
-    source,
-    referred_by: referredBy.trim(),
-    notes: notes.trim(),
-    created_date: new Date().toISOString(),
-  });
-
-  const save = (thenAddJob: boolean) => {
-    const customer = build();
-    onCreate(customer);
-    if (thenAddJob) onAddJob(customer);
-    else go("customers");
-  };
-
-  return <><div className="page-heading"><div><h1>Add Customer</h1><p>Save someone to your customer book. A job is optional — you can add one now or later.</p></div><button className="button" onClick={() => go("customers")}>Cancel</button></div><form className="card form-card" onSubmit={(event) => { event.preventDefault(); save(false); }}><div className="form-grid"><div className="field"><label htmlFor="customer-name">Customer name</label><input id="customer-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="Full name" required /></div><div className="field"><label htmlFor="customer-phone">Phone</label><input id="customer-phone" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 123-4567" /></div><div className="field"><label htmlFor="customer-email">Email</label><input id="customer-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></div><div className="field"><label htmlFor="customer-source">Source</label><select id="customer-source" value={source} onChange={(event) => setSource(event.target.value)}><option>Walk-in</option><option>Phone</option><option>Facebook</option><option>Referral</option><option>Other</option></select></div><div className="field full"><label htmlFor="customer-address">Address</label><input id="customer-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="Street, town, ZIP" /></div><div className="field full"><label htmlFor="customer-referred">Referred by</label><input id="customer-referred" value={referredBy} onChange={(event) => setReferredBy(event.target.value)} placeholder="Optional — who sent them your way?" /></div><div className="field full"><label htmlFor="customer-notes">Notes</label><textarea id="customer-notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Fitting preferences, measurements, anything worth remembering..." /></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("customers")}>Cancel</button><button type="button" className="button" onClick={() => save(true)} disabled={!name.trim()}>Save &amp; add a job</button><button type="submit" className="button primary"><Plus size={15} /> Save customer</button></div></form></>;
-}
-
 function NewLeadView({ data, onCreate, go }: { data: AppData; onCreate: (lead: Lead) => void; go: (view: View) => void }) {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("New");
@@ -846,6 +825,7 @@ export default function Home() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [toastText, setToastText] = useState("");
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -969,7 +949,7 @@ export default function Home() {
     ].slice(0, 8);
   }, [data, globalQuery]);
 
-  const title = navItems.find((item) => item.key === view)?.label || (view === "new-job" ? "Add Job" : view === "new-expense" ? "Add Expense" : view === "new-waiting" ? "Add to waiting list" : view === "new-appointment" ? "New Appointment" : view === "new-lead" ? "New Lead" : view === "new-customer" ? "Add Customer" : "Dashboard");
+  const title = navItems.find((item) => item.key === view)?.label || (view === "new-job" ? "Add Job" : view === "new-expense" ? "Add Expense" : view === "new-waiting" ? "Add to waiting list" : view === "new-appointment" ? "New Appointment" : view === "new-lead" ? "New Lead" : "Dashboard");
   const selectedCustomer = detail?.type === "customer" ? data.customers.find((item) => item.id === detail.id) : undefined;
   const selectedJob = detail?.type === "job" ? data.jobs.find((item) => item.id === detail.id) : undefined;
   const selectedLead = detail?.type === "lead" ? data.leads.find((item) => item.id === detail.id) : undefined;
@@ -984,7 +964,7 @@ export default function Home() {
       {view === "jobs" && selectedJob ? <JobDetailView job={selectedJob} data={data} onBack={closeDetail} onSelectJob={openJob} onEdit={setEditingJob} /> : null}
       {view === "jobs" && (!detail || detail.type !== "job") && <JobsView data={data} go={go} toast={toast} onSelect={openJob} onEdit={setEditingJob} />}
       {view === "customers" && selectedCustomer ? <CustomerDetailView customer={selectedCustomer} data={data} onBack={closeDetail} onSelectJob={openJob} onNewJob={openNewJobForCustomer} onAddAppointment={openNewAppointmentForCustomer} onEdit={setEditingCustomer} /> : null}
-      {view === "customers" && (!detail || detail.type !== "customer") && <CustomersView data={data} go={go} onSelect={openCustomer} onEdit={setEditingCustomer} />}
+      {view === "customers" && (!detail || detail.type !== "customer") && <CustomersView data={data} go={go} onSelect={openCustomer} onEdit={setEditingCustomer} onNew={() => setNewCustomerOpen(true)} />}
       {view === "leads" && selectedLead ? <LeadDetailView lead={selectedLead} onBack={closeDetail} onEdit={setEditingLead} /> : null}
       {view === "leads" && (!detail || detail.type !== "lead") && <LeadsView data={data} go={go} onSelect={openLead} onEdit={setEditingLead} />}
       {view === "bookings" && <BookingsView />}
@@ -998,8 +978,8 @@ export default function Home() {
       {view === "new-waiting" && <NewWaitingView customers={data.customers} onCreate={createWaitingEntry} go={go} />}
       {view === "new-appointment" && <NewAppointmentView data={data} onCreate={createAppointment} go={go} initialCustomer={newAppointmentCustomer} />}
       {view === "new-lead" && <NewLeadView data={data} onCreate={createLead} go={go} />}
-      {view === "new-customer" && <NewCustomerView onCreate={createCustomer} go={go} onAddJob={openNewJobForCustomer} />}
     </div></main>
+    {newCustomerOpen && <NewCustomerModal onClose={() => setNewCustomerOpen(false)} onSave={(customer) => { createCustomer(customer); setNewCustomerOpen(false); }} />}
     {editingCustomer && <EditCustomerModal customer={editingCustomer} onClose={() => setEditingCustomer(null)} onSave={updateCustomer} />}
     {editingJob && <EditJobModal job={editingJob} customers={data.customers} onClose={() => setEditingJob(null)} onSave={updateJob} />}
     {editingLead && <EditLeadModal lead={editingLead} onClose={() => setEditingLead(null)} onSave={updateLead} />}

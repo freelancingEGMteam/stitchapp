@@ -126,3 +126,64 @@ grant execute on function public.studio_set_booking_status(text, text, text) to 
 -- insert into studio_settings (key, value)
 -- values ('studio_key', 'change-me-to-a-long-random-passphrase')
 -- on conflict (key) do update set value = excluded.value;
+
+-- ---------------------------------------------------------------------------
+-- Editable booking hours.
+--
+-- The public page must read these, so the table is world-readable. Nothing
+-- in it is sensitive — it is opening hours. Writing requires the studio
+-- passphrase set above.
+-- ---------------------------------------------------------------------------
+
+create table if not exists booking_settings (
+  id text primary key,
+  slot_minutes integer not null default 30,
+  open_time text not null default '09:00',
+  close_time text not null default '17:00',
+  open_days integer[] not null default '{2,3,4,5,6}',
+  lead_hours integer not null default 12,
+  horizon_days integer not null default 60,
+  allow_same_day boolean not null default false,
+  updated_date timestamptz not null default now()
+);
+
+insert into booking_settings (id) values ('default') on conflict (id) do nothing;
+
+alter table booking_settings enable row level security;
+
+drop policy if exists "public read booking settings" on booking_settings;
+create policy "public read booking settings" on booking_settings
+  for select using (true);
+
+-- Writes are gated on the same passphrase as the bookings list. Only the
+-- fields present in the patch are changed.
+create or replace function public.studio_save_booking_settings(pass text, patch jsonb)
+returns boolean
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if not exists (select 1 from studio_settings where key = 'studio_key' and value = pass) then
+    return false;
+  end if;
+  if (patch->>'open_time') !~ '^[0-2][0-9]:[0-5][0-9]$' or (patch->>'close_time') !~ '^[0-2][0-9]:[0-5][0-9]$' then
+    return false;
+  end if;
+  update booking_settings set
+    slot_minutes = coalesce((patch->>'slot_minutes')::int, slot_minutes),
+    open_time = coalesce(patch->>'open_time', open_time),
+    close_time = coalesce(patch->>'close_time', close_time),
+    open_days = case when patch ? 'open_days'
+      then (select coalesce(array_agg(value::int order by value::int), '{}')
+            from jsonb_array_elements_text(patch->'open_days'))
+      else open_days end,
+    lead_hours = coalesce((patch->>'lead_hours')::int, lead_hours),
+    horizon_days = coalesce((patch->>'horizon_days')::int, horizon_days),
+    allow_same_day = coalesce((patch->>'allow_same_day')::boolean, allow_same_day),
+    updated_date = now()
+  where id = 'default';
+  return found;
+end;
+$$;
+
+revoke all on function public.studio_save_booking_settings(text, jsonb) from public;
+grant execute on function public.studio_save_booking_settings(text, jsonb) to anon, authenticated;

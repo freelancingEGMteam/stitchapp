@@ -6,23 +6,64 @@ export const bookingKinds: BookingKind[] = ["Drop off", "Pick up"];
  * Studio booking rules. Slot times are the studio's own wall-clock times;
  * this assumes customers book within the same timezone, which is the
  * normal case for a local alterations studio.
+ *
+ * These are the defaults. The studio can change them from the Bookings
+ * screen, and the saved values are what the public page uses.
  */
-export const bookingConfig = {
-  slotMinutes: 30,
-  openTime: "09:00",
-  closeTime: "17:00",
+export type BookingRules = {
+  slotMinutes: number;
+  openTime: string;
+  closeTime: string;
   /** 0 = Sunday, so [2,3,4,5,6] is Tuesday through Saturday. */
-  openDays: [2, 3, 4, 5, 6],
+  openDays: number[];
   /** Nothing can be booked with less notice than this. */
-  leadHours: 12,
+  leadHours: number;
   /**
    * When false, the earliest bookable day is tomorrow. Today is left out
    * because the notice period above would rule its slots out anyway;
    * set true if the notice is ever lowered to allow same-day bookings.
    */
-  allowSameDay: false,
+  allowSameDay: boolean;
   /** How far ahead the public page will offer slots. */
+  horizonDays: number;
+};
+
+export const bookingConfig: BookingRules = {
+  slotMinutes: 30,
+  openTime: "09:00",
+  closeTime: "17:00",
+  openDays: [2, 3, 4, 5, 6],
+  leadHours: 12,
+  allowSameDay: false,
   horizonDays: 60,
+};
+
+const isClock = (value: unknown) => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+const clamp = (value: unknown, low: number, high: number, fallback: number) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(high, Math.max(low, Math.round(n))) : fallback;
+};
+
+/**
+ * Turns a row from booking_settings into usable rules, discarding anything
+ * malformed rather than letting bad data break the public page.
+ */
+export const bookingRulesFrom = (row: Record<string, unknown> | null | undefined): BookingRules => {
+  if (!row) return bookingConfig;
+  const days = Array.isArray(row.open_days)
+    ? row.open_days.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    : [];
+  const openTime = isClock(row.open_time) ? String(row.open_time) : bookingConfig.openTime;
+  const closeTime = isClock(row.close_time) ? String(row.close_time) : bookingConfig.closeTime;
+  return {
+    slotMinutes: clamp(row.slot_minutes, 5, 240, bookingConfig.slotMinutes),
+    openTime,
+    closeTime: toMinutes(closeTime) > toMinutes(openTime) ? closeTime : bookingConfig.closeTime,
+    openDays: days.length ? [...new Set(days)].sort((a, b) => a - b) : bookingConfig.openDays,
+    leadHours: clamp(row.lead_hours, 0, 336, bookingConfig.leadHours),
+    allowSameDay: row.allow_same_day === true,
+    horizonDays: clamp(row.horizon_days, 1, 365, bookingConfig.horizonDays),
+  };
 };
 
 export const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -41,11 +82,11 @@ export const formatSlot = (time: string) => {
 };
 
 /** Canonical 24h slot keys, e.g. ["09:00", "09:30", ...] */
-export const slotTimeKeys = (): string[] => {
+export const slotTimeKeys = (rules: BookingRules = bookingConfig): string[] => {
   const out: string[] = [];
-  const open = toMinutes(bookingConfig.openTime);
-  const close = toMinutes(bookingConfig.closeTime);
-  for (let t = open; t + bookingConfig.slotMinutes <= close; t += bookingConfig.slotMinutes) {
+  const open = toMinutes(rules.openTime);
+  const close = toMinutes(rules.closeTime);
+  for (let t = open; t + rules.slotMinutes <= close; t += rules.slotMinutes) {
     out.push(`${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`);
   }
   return out;
@@ -60,7 +101,7 @@ export const parseDateKey = (key: string) => {
   return new Date(year, month - 1, day);
 };
 
-export const isOpenDay = (date: Date) => bookingConfig.openDays.includes(date.getDay());
+export const isOpenDay = (date: Date, rules: BookingRules = bookingConfig) => rules.openDays.includes(date.getDay());
 
 export const slotDateTime = (dayKey: string, slot: string) => {
   const day = parseDateKey(dayKey);
@@ -71,12 +112,12 @@ export const slotDateTime = (dayKey: string, slot: string) => {
 export const slotId = (dayKey: string, slot: string) => `${dayKey} ${slot}`;
 
 /** Open days from tomorrow (or today when allowSameDay) up to the horizon. */
-export const bookableDays = (now = new Date()): string[] => {
+export const bookableDays = (now = new Date(), rules: BookingRules = bookingConfig): string[] => {
   const out: string[] = [];
-  const start = bookingConfig.allowSameDay ? 0 : 1;
-  for (let offset = start; offset <= bookingConfig.horizonDays + start; offset += 1) {
+  const start = rules.allowSameDay ? 0 : 1;
+  for (let offset = start; offset <= rules.horizonDays + start; offset += 1) {
     const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
-    if (isOpenDay(day)) out.push(dateKey(day));
+    if (isOpenDay(day, rules)) out.push(dateKey(day));
   }
   return out;
 };
@@ -97,9 +138,9 @@ export const monthIndexOf = (key: string) => {
   return day.getFullYear() * 12 + day.getMonth();
 };
 
-export const isSlotAvailable = (dayKey: string, slot: string, booked: Set<string>, now = new Date()) => {
+export const isSlotAvailable = (dayKey: string, slot: string, booked: Set<string>, now = new Date(), rules: BookingRules = bookingConfig) => {
   if (booked.has(slotId(dayKey, slot))) return false;
-  const earliest = new Date(now.getTime() + bookingConfig.leadHours * 60 * 60 * 1000);
+  const earliest = new Date(now.getTime() + rules.leadHours * 60 * 60 * 1000);
   return slotDateTime(dayKey, slot) >= earliest;
 };
 
@@ -109,18 +150,18 @@ export const prettyDay = (key: string) =>
 export const prettyDayLong = (key: string) =>
   new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(parseDateKey(key));
 
-export const openingHoursLabel = () => {
-  const days = [...bookingConfig.openDays].sort((a, b) => a - b);
+export const openingHoursLabel = (rules: BookingRules = bookingConfig) => {
+  const days = [...rules.openDays].sort((a, b) => a - b);
   const contiguous = days.every((day, index) => index === 0 || day === days[index - 1] + 1);
   const label = days.length > 1 && contiguous
     ? `${dayNames[days[0]].slice(0, 3)}–${dayNames[days[days.length - 1]].slice(0, 3)}`
     : days.map((day) => dayNames[day].slice(0, 3)).join(", ");
-  return `${label} · ${formatSlot(bookingConfig.openTime)} – ${formatSlot(bookingConfig.closeTime)}`;
+  return `${label} · ${formatSlot(rules.openTime)} – ${formatSlot(rules.closeTime)}`;
 };
 
 /** e.g. "Closed Sundays and Mondays." — empty when open every day. */
-export const closedDaysLabel = () => {
-  const closed = [0, 1, 2, 3, 4, 5, 6].filter((day) => !bookingConfig.openDays.includes(day));
+export const closedDaysLabel = (rules: BookingRules = bookingConfig) => {
+  const closed = [0, 1, 2, 3, 4, 5, 6].filter((day) => !rules.openDays.includes(day));
   if (closed.length === 0) return "";
   return `Closed ${closed.map((day) => `${dayNames[day]}s`).join(" and ")}.`;
 };

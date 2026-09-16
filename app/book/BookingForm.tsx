@@ -5,8 +5,10 @@ import { CalendarDays, CheckCircle2, Clock3, MapPin, Phone, Scissors } from "luc
 import { supabase } from "@/lib/supabase";
 import {
   BookingKind,
+  BookingRules,
   bookingConfig,
   bookingKinds,
+  bookingRulesFrom,
   bookableDays,
   closedDaysLabel,
   formatSlot,
@@ -139,8 +141,18 @@ export default function BookingForm() {
 
   useEffect(() => { setNow(new Date()); }, []);
 
-  const bookable = useMemo(() => (now ? bookableDays(now) : []), [now]);
-  const slots = useMemo(() => slotTimeKeys(), []);
+  const [rules, setRules] = useState<BookingRules>(bookingConfig);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    void supabase.from("booking_settings").select("*").eq("id", "default").maybeSingle().then(({ data }) => {
+      if (!cancelled && data) setRules(bookingRulesFrom(data as Record<string, unknown>));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const bookable = useMemo(() => (now ? bookableDays(now, rules) : []), [now, rules]);
+  const slots = useMemo(() => slotTimeKeys(rules), [rules]);
 
   // Days that are open AND still have at least one free slot. Offering a day
   // with nothing left on it only leads the customer into a dead end.
@@ -148,10 +160,10 @@ export default function BookingForm() {
     const set = new Set<string>();
     if (!now) return set;
     for (const key of bookable) {
-      if (slots.some((time) => isSlotAvailable(key, time, booked, now))) set.add(key);
+      if (slots.some((time) => isSlotAvailable(key, time, booked, now, rules))) set.add(key);
     }
     return set;
-  }, [bookable, slots, booked, now]);
+  }, [bookable, slots, booked, now, rules]);
 
   useEffect(() => {
     if (day || !now || bookable.length === 0) return;
@@ -255,8 +267,8 @@ export default function BookingForm() {
   };
 
   const available = useMemo(
-    () => slots.filter((time) => now && day && isSlotAvailable(day, time, booked, now)),
-    [slots, booked, day, now],
+    () => slots.filter((time) => now && day && isSlotAvailable(day, time, booked, now, rules)),
+    [slots, booked, day, now, rules],
   );
 
   const notesCopy = kind === "Pick up"
@@ -328,10 +340,10 @@ export default function BookingForm() {
         ><span className="booking-kind-dot" aria-hidden="true" />{option}</button>)}
       </div>
       <ul className="booking-facts">
-        <li><Clock3 size={14} /> {bookingConfig.slotMinutes} min</li>
-        <li><CalendarDays size={14} /> {openingHoursLabel()}</li>
+        <li><Clock3 size={14} /> {rules.slotMinutes} min</li>
+        <li><CalendarDays size={14} /> {openingHoursLabel(rules)}</li>
       </ul>
-      <p className="booking-aside-note">{closedDaysLabel()}</p>
+      <p className="booking-aside-note">{closedDaysLabel(rules)}</p>
     </aside>
 
     <div className="booking-picker">

@@ -357,6 +357,11 @@ a { color: inherit; text-decoration: none; }
 .booking-request-when { flex: 0 0 96px; }
 .booking-request-when .row-title { font-size: 15px; }
 .booking-request-main { flex: 1; min-width: 0; }
+.hours-card { margin-top: 12px; }
+.hours-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 14px; }
+.hours-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.hours-day { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink); font-size: 13px; font-weight: 600; }
+.hours-day.on { background: var(--rose); border-color: var(--rose); color: #fff; }
 @media (max-width: 720px) {
   .booking-request { align-items: flex-start; flex-wrap: wrap; }
   .booking-request-when { flex: 0 0 78px; }

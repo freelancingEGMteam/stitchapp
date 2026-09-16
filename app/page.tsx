@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
-import { formatSlot, prettyDay } from "@/lib/booking";
+import { BookingRules, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay } from "@/lib/booking";
 import { supabase } from "@/lib/supabase";
 
 type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "bookings" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead";
@@ -542,6 +542,102 @@ function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry
 
 type BookingRow = { id: string; slot_date: string; slot_time: string; kind: string; customer_name: string; phone_number?: string; email?: string; location?: string; notes?: string; status: string };
 
+function BookingHoursEditor({ pass }: { pass: string }) {
+  const [draft, setDraft] = useState<BookingRules | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    void supabase.from("booking_settings").select("*").eq("id", "default").maybeSingle().then(({ data }) => {
+      if (!cancelled) setDraft(bookingRulesFrom(data as Record<string, unknown> | null));
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !draft) return;
+    setSaving(true); setError(""); setNote("");
+    const { data, error: rpcError } = await supabase.rpc("studio_save_booking_settings", {
+      pass,
+      patch: {
+        slot_minutes: draft.slotMinutes,
+        open_time: draft.openTime,
+        close_time: draft.closeTime,
+        open_days: draft.openDays,
+        lead_hours: draft.leadHours,
+        horizon_days: draft.horizonDays,
+        allow_same_day: draft.allowSameDay,
+      },
+    });
+    setSaving(false);
+    if (rpcError || data !== true) { setError("Could not save. Check the passphrase and try again."); return; }
+    setNote("Saved. The booking page picks these up straight away.");
+  };
+
+  if (!draft) return <div className="card"><div className="booking-muted">Loading hours…</div></div>;
+
+  const toggleDay = (day: number) => setDraft({
+    ...draft,
+    openDays: draft.openDays.includes(day)
+      ? draft.openDays.filter((item) => item !== day)
+      : [...draft.openDays, day].sort((a, b) => a - b),
+  });
+
+  return <form className="card hours-card" onSubmit={save}>
+    <div className="eyebrow">Booking hours</div>
+    <p className="row-meta" style={{ marginTop: 8 }}>These decide which times customers can choose on your booking page.</p>
+
+    <div className="hours-row">
+      <div className="field"><label htmlFor="hours-open">Opens</label>
+        <input id="hours-open" type="time" value={draft.openTime} onChange={(event) => setDraft({ ...draft, openTime: event.target.value })} required /></div>
+      <div className="field"><label htmlFor="hours-close">Closes</label>
+        <input id="hours-close" type="time" value={draft.closeTime} onChange={(event) => setDraft({ ...draft, closeTime: event.target.value })} required /></div>
+      <div className="field"><label htmlFor="hours-slot">Slot length</label>
+        <select id="hours-slot" value={draft.slotMinutes} onChange={(event) => setDraft({ ...draft, slotMinutes: Number(event.target.value) })}>
+          {[15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+        </select></div>
+    </div>
+
+    <div className="field" style={{ marginTop: 14 }}>
+      <label>Open days</label>
+      <div className="hours-days">{dayNames.map((label, day) => <button
+        key={label}
+        type="button"
+        className={`hours-day ${draft.openDays.includes(day) ? "on" : ""}`}
+        aria-pressed={draft.openDays.includes(day)}
+        onClick={() => toggleDay(day)}
+      >{label.slice(0, 3)}</button>)}</div>
+    </div>
+
+    <div className="hours-row" style={{ marginTop: 14 }}>
+      <div className="field"><label htmlFor="hours-lead">Minimum notice</label>
+        <select id="hours-lead" value={draft.leadHours} onChange={(event) => setDraft({ ...draft, leadHours: Number(event.target.value) })}>
+          {[0, 2, 4, 12, 24, 48, 72].map((hours) => <option key={hours} value={hours}>{hours === 0 ? "No minimum" : `${hours} hours`}</option>)}
+        </select></div>
+      <div className="field"><label htmlFor="hours-horizon">Book ahead</label>
+        <select id="hours-horizon" value={draft.horizonDays} onChange={(event) => setDraft({ ...draft, horizonDays: Number(event.target.value) })}>
+          {[14, 30, 60, 90, 180].map((days) => <option key={days} value={days}>{days} days</option>)}
+        </select></div>
+      <div className="field"><label htmlFor="hours-same">Same-day bookings</label>
+        <select id="hours-same" value={draft.allowSameDay ? "yes" : "no"} onChange={(event) => setDraft({ ...draft, allowSameDay: event.target.value === "yes" })}>
+          <option value="no">No — start tomorrow</option>
+          <option value="yes">Yes — allow today</option>
+        </select></div>
+    </div>
+
+    <div className="row-meta" style={{ marginTop: 14 }}>
+      Customers will see <strong>{openingHoursLabel(draft)}</strong>{closedDaysLabel(draft) ? ` · ${closedDaysLabel(draft)}` : ""}
+    </div>
+    {error && <div className="booking-alert error" style={{ marginTop: 12 }}>{error}</div>}
+    {note && <div className="booking-area ok" style={{ marginTop: 12 }}><CheckCircle2 size={14} /> {note}</div>}
+    <div className="form-actions"><button type="submit" className="button primary" disabled={saving}>{saving ? "Saving…" : "Save hours"}</button></div>
+  </form>;
+}
+
 function BookingsView() {
   const [pass, setPass] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem("stitchflow-studio-key") || ""));
   const [draftPass, setDraftPass] = useState("");
@@ -646,6 +742,7 @@ function BookingsView() {
           <button className="button small" onClick={() => changeStatus(row.id, "Declined")}><X size={13} /> Decline</button>
         </div>
       </div>)}</div>
+      <BookingHoursEditor pass={pass} />
     </>}
   </>;
 }

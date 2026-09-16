@@ -187,3 +187,22 @@ $$;
 
 revoke all on function public.studio_save_booking_settings(text, jsonb) from public;
 grant execute on function public.studio_save_booking_settings(text, jsonb) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Table-level grants.
+--
+-- RLS decides WHICH ROWS a role may touch, but the role still needs
+-- permission on the TABLE itself, and the two are separate. Tables created
+-- through the Management API do not inherit Supabase's usual default
+-- privileges, so without these the anon key gets "permission denied for
+-- table ..." (42501) even though the policies look correct.
+--
+-- Least privilege: anon may read the hours and create a request, nothing
+-- else. studio_settings gets NO grant at all — it is reachable only from
+-- the SECURITY DEFINER functions above, which is what keeps the passphrase
+-- out of reach.
+-- ---------------------------------------------------------------------------
+
+grant usage on schema public to anon, authenticated;
+grant select on table public.booking_settings to anon, authenticated;
+grant insert on table public.booking_requests to anon, authenticated;

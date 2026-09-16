@@ -321,15 +321,20 @@ a { color: inherit; text-decoration: none; }
 .booking-summary span:nth-child(odd) { color: var(--ink); font-weight: 600; }
 .booking-back { width: 100%; margin-top: 10px; padding: 10px; border: 0; background: transparent; color: var(--rose-deep); font-size: 13px; font-weight: 600; }
 .booking-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px 12px; align-items: start; }
+/* Address on the left, "what are you bringing" on the right; stacks when narrow. */
+.booking-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 16px; align-items: start; margin-top: 14px; }
 .booking-field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .booking-field.full { grid-column: 1 / -1; }
-.booking-field-address { padding-top: 4px; border-top: 1px solid var(--border); margin-top: 2px; }
+.booking-field-address { padding-top: 2px; }
 .booking-field input, .booking-field textarea { border: 1px solid var(--border); border-radius: 9px; padding: 10px 11px; background: var(--surface-soft); color: var(--ink); font-size: 14px; font-family: inherit; }
 .booking-field textarea { min-height: 74px; resize: vertical; }
 .booking-field input:focus, .booking-field textarea:focus { outline: 2px solid var(--rose-soft); border-color: var(--rose); }
 .booking-hint { font-style: normal; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .booking-field > label { font-size: 13px; color: var(--muted); }
 .booking-address { position: relative; }
+/* The input sits in a wrapper rather than directly in the grid, so it needs
+   an explicit width or it falls back to the browser default size. */
+.booking-address input { width: 100%; }
 .booking-suggest { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 28px rgba(40,30,25,.14); max-height: 220px; overflow-y: auto; }
 .booking-suggest li { padding: 9px 10px; border-radius: 7px; font-size: 13px; line-height: 1.35; color: var(--ink); cursor: pointer; }
 .booking-suggest li.active { background: var(--rose-soft); }

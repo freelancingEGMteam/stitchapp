@@ -416,7 +416,9 @@ export default function BookingForm() {
           <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 123-4567" /></label>
         <label className="booking-field"><span>Email</span>
           <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></label>
-        <div className="booking-field full booking-field-address">
+      </div>
+      <div className="booking-pair">
+        <div className="booking-field booking-field-address">
           <label htmlFor="booking-location">{kind === "Pick up" ? "Where should we collect from?" : "Your address"}</label>
           <div className="booking-address">
             <input
@@ -453,7 +455,7 @@ export default function BookingForm() {
           {locationNote === "inside" && <span className="booking-area ok"><CheckCircle2 size={14} /> That address is inside our travel area.</span>}
           {locationNote && locationNote !== "inside" && <span className="booking-area bad"><MapPin size={14} /> {locationNote}</span>}
         </div>
-        <label className="booking-field full"><span>{notesCopy.label}</span>
+        <label className="booking-field"><span>{notesCopy.label}</span>
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={notesCopy.placeholder} /></label>
       </div>
       {error && <div className="booking-alert error">{error}</div>}

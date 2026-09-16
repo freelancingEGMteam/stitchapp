@@ -378,6 +378,14 @@ const axisScale = (max: number) => {
   return { step, top: Math.ceil(max / step) * step || step };
 };
 
+const compactMoney = (value: number) => {
+  if (value >= 1000) {
+    const thousands = value / 1000;
+    return `$${thousands >= 10 ? Math.round(thousands) : thousands.toFixed(1).replace(/\.0$/, "")}K`;
+  }
+  return `$${Math.round(value)}`;
+};
+
 function FinanceChart({ data }: { data: AppData }) {
   const series = monthlySeries(data);
   if (series.length === 0) return <div className="card chart"><div className="empty">No monthly activity to chart yet.</div></div>;
@@ -387,18 +395,21 @@ function FinanceChart({ data }: { data: AppData }) {
   const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, index) => index * step);
 
   const width = 720;
-  const height = 260;
-  const padLeft = 62;
-  const padRight = 14;
-  const padTop = 18;
-  const padBottom = 36;
+  const height = 300;
+  const padLeft = 64;
+  const padRight = 18;
+  const padTop = 34;
+  const padBottom = 42;
   const plotWidth = width - padLeft - padRight;
   const plotHeight = height - padTop - padBottom;
   const baseline = padTop + plotHeight;
   const groupWidth = plotWidth / series.length;
-  const barWidth = Math.min(32, groupWidth * 0.26);
+  const barWidth = Math.min(38, groupWidth * 0.3);
+  const barGap = 4;
   const y = (value: number) => baseline - (value / top) * plotHeight;
+  const barHeight = (value: number) => Math.max(0, baseline - y(value));
   const axisMoney = (value: number) => (value === 0 ? "$0" : `$${Math.round(value).toLocaleString("en-US")}`);
+  const currentMonth = new Date().toISOString().slice(0, 7);
 
   return <div className="card chart">
     <div className="chart-legend">
@@ -406,20 +417,43 @@ function FinanceChart({ data }: { data: AppData }) {
       <span className="legend-item"><i className="legend-swatch expenses" />Expenses</span>
     </div>
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly revenue compared with monthly expenses">
+      <defs>
+        <linearGradient id="chartRevenueFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#dfa8a2" />
+          <stop offset="100%" stopColor="#c07a74" />
+        </linearGradient>
+        <linearGradient id="chartExpensesFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#e2c079" />
+          <stop offset="100%" stopColor="#bf8c26" />
+        </linearGradient>
+      </defs>
+
+      {series.map((point, index) => point.month === currentMonth
+        ? <rect key="current-month" className="chart-highlight" x={padLeft + groupWidth * index + 3} y={padTop} width={groupWidth - 6} height={plotHeight} rx="12" />
+        : null)}
+
       {ticks.map((tick) => <g key={`tick-${tick}`}>
-        <line x1={padLeft} x2={width - padRight} y1={y(tick)} y2={y(tick)} className="chart-grid" />
-        <text x={padLeft - 10} y={y(tick) + 4} textAnchor="end" className="chart-axis">{axisMoney(tick)}</text>
+        <line x1={padLeft} x2={width - padRight} y1={y(tick)} y2={y(tick)} className={tick === 0 ? "chart-grid base" : "chart-grid"} />
+        <text x={padLeft - 12} y={y(tick) + 4} textAnchor="end" className="chart-axis">{axisMoney(tick)}</text>
       </g>)}
+
       {series.map((point, index) => {
         const center = padLeft + groupWidth * index + groupWidth / 2;
+        const revenueX = center - barWidth - barGap / 2;
+        const expensesX = center + barGap / 2;
+        const revenueTop = y(point.revenue);
+        const expensesTop = y(point.expenses);
+        const isCurrent = point.month === currentMonth;
         return <g key={point.month}>
-          <rect className="chart-bar revenue" x={center - barWidth - 3} y={y(point.revenue)} width={barWidth} height={Math.max(0, baseline - y(point.revenue))} rx="3">
+          <rect className="chart-bar revenue" x={revenueX} y={revenueTop} width={barWidth} height={barHeight(point.revenue)} rx="5" fill="url(#chartRevenueFill)">
             <title>{`${monthLong(point.month)} — revenue ${money(point.revenue)}`}</title>
           </rect>
-          <rect className="chart-bar expenses" x={center + 3} y={y(point.expenses)} width={barWidth} height={Math.max(0, baseline - y(point.expenses))} rx="3">
+          <rect className="chart-bar expenses" x={expensesX} y={expensesTop} width={barWidth} height={barHeight(point.expenses)} rx="5" fill="url(#chartExpensesFill)">
             <title>{`${monthLong(point.month)} — expenses ${money(point.expenses)}`}</title>
           </rect>
-          <text x={center} y={height - 13} textAnchor="middle" className="chart-axis">{monthLabel(point.month)}</text>
+          {point.revenue > 0 && <text x={revenueX + barWidth / 2} y={revenueTop - 8} textAnchor="middle" className="chart-value">{compactMoney(point.revenue)}</text>}
+          {point.expenses > 0 && <text x={expensesX + barWidth / 2} y={expensesTop - 8} textAnchor="middle" className="chart-value">{compactMoney(point.expenses)}</text>}
+          <text x={center} y={height - 15} textAnchor="middle" className={isCurrent ? "chart-axis current" : "chart-axis"}>{monthLabel(point.month)}</text>
         </g>;
       })}
     </svg>

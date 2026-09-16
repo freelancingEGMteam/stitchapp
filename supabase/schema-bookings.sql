@@ -15,6 +15,7 @@ create table if not exists booking_requests (
   customer_name text not null,
   phone_number text,
   email text,
+  location text,
   notes text,
   status text not null default 'Requested',
   created_date timestamptz not null default now()
@@ -29,6 +30,9 @@ create unique index if not exists booking_requests_active_slot
 
 create index if not exists booking_requests_date_idx
   on booking_requests (slot_date);
+
+-- Added after the first release; harmless if the column already exists.
+alter table booking_requests add column if not exists location text;
 
 alter table booking_requests enable row level security;
 

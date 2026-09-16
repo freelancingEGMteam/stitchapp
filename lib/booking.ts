@@ -124,3 +124,50 @@ export const closedDaysLabel = () => {
   if (closed.length === 0) return "";
   return `Closed ${closed.map((day) => `${dayNames[day]}s`).join(" and ")}.`;
 };
+
+/**
+ * Where the studio will travel to. Coordinates are the centroid of ZIP
+ * 03446 (Swanzey, NH) from OpenStreetMap.
+ */
+export const serviceArea = {
+  zip: "03446",
+  label: "Swanzey, NH 03446",
+  lat: 42.8667733,
+  lng: -72.2923595,
+  /** Address suggestions are biased inside this radius. */
+  suggestRadiusMiles: 25,
+  /** Stated to the customer as a drive time. */
+  maxDriveMinutes: 20,
+  /**
+   * The drive time is enforced as a straight-line radius, because real
+   * drive time needs the Distance Matrix API. Around Swanzey, 15 miles
+   * is roughly 20 minutes on local roads. Raise or lower to taste.
+   */
+  maxRadiusMiles: 15,
+};
+
+/** Great-circle distance in miles. */
+export const milesBetween = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+  const toRad = (degrees: number) => (degrees * Math.PI) / 180;
+  const earthRadiusMiles = 3958.8;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusMiles * Math.asin(Math.sqrt(a));
+};
+
+export const milesFromStudio = (lat: number, lng: number) =>
+  milesBetween(serviceArea.lat, serviceArea.lng, lat, lng);
+
+export const withinServiceArea = (lat: number, lng: number) =>
+  milesFromStudio(lat, lng) <= serviceArea.maxRadiusMiles;
+
+export const travelAreaLabel = () =>
+  `within a ${serviceArea.maxDriveMinutes}-minute drive of ${serviceArea.label}`;
+
+/** The message shown when an address falls outside the travel area. */
+export const outsideAreaMessage = (lat: number, lng: number) => {
+  const miles = milesFromStudio(lat, lng);
+  return `That address is about ${Math.round(miles)} miles from the studio, outside our ${serviceArea.maxDriveMinutes}-minute area around ${serviceArea.label}. Call the studio and we will see what we can do.`;
+};

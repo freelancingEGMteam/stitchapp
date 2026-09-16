@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, CheckCircle2, Clock3, Phone, Scissors } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CalendarDays, CheckCircle2, Clock3, MapPin, Phone, Scissors } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
   BookingKind,
@@ -15,11 +15,36 @@ import {
   monthIndexOf,
   monthTitle,
   openingHoursLabel,
+  outsideAreaMessage,
   parseDateKey,
   prettyDayLong,
+  serviceArea,
   slotId,
   slotTimeKeys,
+  travelAreaLabel,
+  withinServiceArea,
 } from "@/lib/booking";
+
+/** The Google Maps key is optional: without it the address field still works. */
+const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+
+// Minimal shapes for the parts of the Maps API we touch, so we do not need
+// to pull in @types/google.maps as a dependency.
+type GooglePlace = {
+  formatted_address?: string;
+  name?: string;
+  geometry?: { location?: { lat: () => number; lng: () => number } };
+};
+type GoogleAutocomplete = {
+  addListener: (event: string, handler: () => void) => void;
+  getPlace: () => GooglePlace;
+};
+type GoogleMaps = {
+  maps: {
+    Circle: new (options: unknown) => { getBounds: () => unknown };
+    places: { Autocomplete: new (input: HTMLInputElement, options: unknown) => GoogleAutocomplete };
+  };
+};
 
 export default function BookingForm() {
   // Dates resolve on the client only. Rendering them during SSR would produce
@@ -34,6 +59,12 @@ export default function BookingForm() {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
+  const [location, setLocation] = useState("");
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationNote, setLocationNote] = useState("");
+  const [mapsReady, setMapsReady] = useState(false);
+  const addressRef = useRef<HTMLInputElement | null>(null);
+  const autocompleteRef = useRef<GoogleAutocomplete | null>(null);
   const [booked, setBooked] = useState<Set<string>>(new Set());
   const [loadingSlots, setLoadingSlots] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -82,6 +113,53 @@ export default function BookingForm() {
   const lastMonth = bookable.length ? monthIndexOf(bookable[bookable.length - 1]) : 0;
   const cells = useMemo(() => (cursor === null ? [] : monthGrid(Math.floor(cursor / 12), cursor % 12)), [cursor]);
 
+  // Load the Maps script once, and only when a key is configured. Without a
+  // key the address field stays a plain required text input.
+  useEffect(() => {
+    if (!MAPS_KEY) return;
+    if ((window as unknown as { google?: GoogleMaps }).google?.maps?.places) { setMapsReady(true); return; }
+    const existing = document.getElementById("sf-google-maps") as HTMLScriptElement | null;
+    const onLoad = () => setMapsReady(true);
+    if (existing) { existing.addEventListener("load", onLoad); return () => existing.removeEventListener("load", onLoad); }
+    const script = document.createElement("script");
+    script.id = "sf-google-maps";
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places&loading=async`;
+    script.async = true;
+    script.addEventListener("load", onLoad);
+    document.head.appendChild(script);
+    return () => script.removeEventListener("load", onLoad);
+  }, []);
+
+  // Bind autocomplete, biased to the travel area so nearby addresses surface
+  // first. strictBounds keeps suggestions inside that circle.
+  useEffect(() => {
+    if (!mapsReady || !addressRef.current || autocompleteRef.current) return;
+    const google = (window as unknown as { google?: GoogleMaps }).google;
+    if (!google?.maps?.places) return;
+    const circle = new google.maps.Circle({
+      center: { lat: serviceArea.lat, lng: serviceArea.lng },
+      radius: serviceArea.suggestRadiusMiles * 1609.34,
+    });
+    const autocomplete = new google.maps.places.Autocomplete(addressRef.current, {
+      componentRestrictions: { country: "us" },
+      bounds: circle.getBounds(),
+      strictBounds: true,
+      fields: ["formatted_address", "name", "geometry"],
+    });
+    autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      const address = place.formatted_address || place.name || "";
+      const point = place.geometry?.location;
+      if (address) setLocation(address);
+      if (!point) { setCoords(null); setLocationNote(""); return; }
+      const lat = point.lat();
+      const lng = point.lng();
+      setCoords({ lat, lng });
+      setLocationNote(withinServiceArea(lat, lng) ? "inside" : outsideAreaMessage(lat, lng));
+    });
+    autocompleteRef.current = autocomplete;
+  }, [mapsReady]);
+
   const available = useMemo(
     () => slots.filter((time) => now && day && isSlotAvailable(day, time, booked, now)),
     [slots, booked, day, now],
@@ -95,6 +173,9 @@ export default function BookingForm() {
     event.preventDefault();
     setError("");
     if (!slot) { setError("Please choose a time slot."); return; }
+    if (!location.trim()) { setError("Please add the address for this booking."); return; }
+    if (MAPS_KEY && !coords) { setError("Please choose your address from the suggestions so we can check it is inside our travel area."); return; }
+    if (coords && !withinServiceArea(coords.lat, coords.lng)) { setError(outsideAreaMessage(coords.lat, coords.lng)); return; }
     if (!supabase) { setError("Online booking is not connected yet. Please call the studio to arrange a time."); return; }
     setSubmitting(true);
     const { error: insertError } = await supabase.from("booking_requests").insert({
@@ -105,6 +186,7 @@ export default function BookingForm() {
       customer_name: name.trim(),
       phone_number: phone.trim(),
       email: email.trim(),
+      location: location.trim(),
       notes: notes.trim(),
       status: "Requested",
     });
@@ -223,6 +305,24 @@ export default function BookingForm() {
         <span>{kind}</span><span>·</span><span>{prettyDayLong(day)}</span><span>·</span><span>{formatSlot(slot)}</span>
       </div>
       <div className="booking-fields">
+        <label className="booking-field full">
+          <span>{kind === "Pick up" ? "Where should we collect from?" : "Your address"}</span>
+          <input
+            id="booking-location"
+            ref={addressRef}
+            value={location}
+            autoComplete="off"
+            placeholder="Start typing your street address…"
+            onChange={(event) => { setLocation(event.target.value); setCoords(null); setLocationNote(""); }}
+            required
+          />
+          <em className="booking-hint">
+            We travel {travelAreaLabel()}.
+            {MAPS_KEY ? " Pick your address from the list so we can check it is in range." : ""}
+          </em>
+          {locationNote === "inside" && <span className="booking-area ok"><CheckCircle2 size={14} /> That address is inside our travel area.</span>}
+          {locationNote && locationNote !== "inside" && <span className="booking-area bad"><MapPin size={14} /> {locationNote}</span>}
+        </label>
         <label className="booking-field"><span>Name</span>
           <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" required /></label>
         <label className="booking-field"><span>Phone</span>

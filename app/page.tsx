@@ -540,7 +540,7 @@ function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry
   return <><div className="page-heading"><div><h1>Waiting List</h1><p>Keep track of customers waiting for an opening or a material.</p></div><button className="button primary" onClick={() => go("new-waiting")}><Plus size={15} /> Add to list</button></div>{entries.length === 0 ? <div className="empty"><ListFilter size={28} style={{ marginBottom: 10, color: "var(--rose)" }} /><div>No one is waiting right now.</div><div style={{ marginTop: 6, fontSize: 13 }}>New requests can be added here while you plan the next fitting.</div></div> : <div className="stack">{entries.map((entry) => <div className="waiting-row" key={entry.id}><div className="avatar">{initials(entry.name)}</div><div className="waiting-row-main"><div className="row-title">{entry.name}</div><div className="row-description">{entry.request}</div><div className="row-meta">{entry.contact || "No contact details"} · Added {shortDate(entry.addedDate)}</div></div><button className="button small" aria-label={`Edit ${entry.name}`} onClick={() => onEdit(entry)}><Pencil size={13} /> Edit</button></div>)}</div>}</>;
 }
 
-type BookingRow = { id: string; slot_date: string; slot_time: string; kind: string; customer_name: string; phone_number?: string; email?: string; notes?: string; status: string };
+type BookingRow = { id: string; slot_date: string; slot_time: string; kind: string; customer_name: string; phone_number?: string; email?: string; location?: string; notes?: string; status: string };
 
 function BookingsView() {
   const [pass, setPass] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem("stitchflow-studio-key") || ""));
@@ -637,6 +637,7 @@ function BookingsView() {
         <div className="booking-request-main">
           <div className="row-title">{row.customer_name} <span className="muted">{row.kind}</span></div>
           <div className="row-meta">{row.phone_number || row.email || "No contact details"}</div>
+          {row.location && <div className="row-meta"><MapPin size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />{row.location}</div>}
           {row.notes && <div className="row-description">{row.notes}</div>}
         </div>
         <div className="row-actions">

@@ -560,6 +560,9 @@ function BookingHoursEditor({ pass }: { pass: string }) {
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !draft) return;
+    // Saving an empty day list would silently fall back to the defaults on the
+    // public page, which looks like the setting was ignored.
+    if (draft.openDays.length === 0) { setError("Pick at least one open day."); setNote(""); return; }
     setSaving(true); setError(""); setNote("");
     const { data, error: rpcError } = await supabase.rpc("studio_save_booking_settings", {
       pass,
@@ -634,7 +637,7 @@ function BookingHoursEditor({ pass }: { pass: string }) {
     </div>
     {error && <div className="booking-alert error" style={{ marginTop: 12 }}>{error}</div>}
     {note && <div className="booking-area ok" style={{ marginTop: 12 }}><CheckCircle2 size={14} /> {note}</div>}
-    <div className="form-actions"><button type="submit" className="button primary" disabled={saving}>{saving ? "Saving…" : "Save hours"}</button></div>
+    <div className="form-actions"><button type="submit" className="button primary" disabled={saving || draft.openDays.length === 0}>{saving ? "Saving…" : "Save hours"}</button></div>
   </form>;
 }
 

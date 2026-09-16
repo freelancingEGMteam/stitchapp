@@ -16,7 +16,12 @@ alter table studio_members enable row level security;
 -- No policies and no grants: this table is reachable only from the
 -- SECURITY DEFINER helper below, so it cannot be read or edited by a client.
 
-insert into studio_members (email) values ('rachel.valencas@gmail.com')
+-- The allowlist. Only these addresses can read bookings or change hours.
+-- This is the single source of truth for who has access: add or remove
+-- people by editing this list and re-running this file.
+insert into studio_members (email) values
+  ('rachel.valencas@gmail.com'),
+  ('matiasvalencas@gmail.com')
   on conflict (email) do nothing;
 
 -- True only when the signed-in user's email is on the list.

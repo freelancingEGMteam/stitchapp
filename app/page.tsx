@@ -473,7 +473,7 @@ function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry
 }
 
 function TeamView() {
-  return <><div className="page-heading"><div><h1>Team</h1><p>People who keep Rachel&apos;s Seamstress Studio moving.</p></div><button className="button primary"><Plus size={15} /> Invite member</button></div><div className="grid-2"><div className="card"><div className="avatar">RC</div><h3 style={{ marginTop: 12 }}>Rachel Carter</h3><div className="muted">Owner · Studio manager</div><div className="stat-line" style={{ marginTop: 14 }}><span>Access</span><strong>Admin</strong></div></div><div className="card"><div className="avatar green">AS</div><h3 style={{ marginTop: 12 }}>Alterations team</h3><div className="muted">Shared workspace</div><div className="stat-line" style={{ marginTop: 14 }}><span>Open jobs</span><strong>3</strong></div></div></div></>;
+  return <><div className="page-heading"><div><h1>Team</h1><p>People who keep Rachel&apos;s Seamstress Studio moving.</p></div><button className="button primary"><Plus size={15} /> Invite member</button></div><div className="grid-2"><div className="card"><div className="avatar">RV</div><h3 style={{ marginTop: 12 }}>Rachel Valenzuela</h3><div className="muted">Owner · Studio manager</div><div className="stat-line" style={{ marginTop: 14 }}><span>Access</span><strong>Admin</strong></div></div><div className="card"><div className="avatar green">AS</div><h3 style={{ marginTop: 12 }}>Alterations team</h3><div className="muted">Shared workspace</div><div className="stat-line" style={{ marginTop: 14 }}><span>Open jobs</span><strong>3</strong></div></div></div></>;
 }
 
 function LifecycleView({ data, onEdit }: { data: AppData; onEdit: (record: Lifecycle) => void }) {

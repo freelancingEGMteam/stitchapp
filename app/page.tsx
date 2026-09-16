@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
   ArrowUpRight,
   ArrowLeft,
+  CalendarCheck,
   CalendarDays,
   CheckCircle2,
   ChevronRight,
@@ -34,9 +35,10 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
+import { formatSlot, prettyDay } from "@/lib/booking";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead";
+type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "bookings" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead";
 type WaitingEntry = { id: string; name: string; contact?: string; request: string; notes?: string; addedDate: string };
 
 type NavItem = { key: View; label: string; icon: LucideIcon };
@@ -47,6 +49,7 @@ const navItems: NavItem[] = [
   { key: "customers", label: "Customers", icon: UsersRound },
   { key: "leads", label: "Leads", icon: UserRound },
   { key: "appointments", label: "Appointments", icon: CalendarDays },
+  { key: "bookings", label: "Bookings", icon: CalendarCheck },
   { key: "finances", label: "Finances", icon: WalletCards },
   { key: "waiting", label: "Waiting List", icon: ListFilter },
   { key: "team", label: "Team", icon: UsersRound },
@@ -537,6 +540,115 @@ function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry
   return <><div className="page-heading"><div><h1>Waiting List</h1><p>Keep track of customers waiting for an opening or a material.</p></div><button className="button primary" onClick={() => go("new-waiting")}><Plus size={15} /> Add to list</button></div>{entries.length === 0 ? <div className="empty"><ListFilter size={28} style={{ marginBottom: 10, color: "var(--rose)" }} /><div>No one is waiting right now.</div><div style={{ marginTop: 6, fontSize: 13 }}>New requests can be added here while you plan the next fitting.</div></div> : <div className="stack">{entries.map((entry) => <div className="waiting-row" key={entry.id}><div className="avatar">{initials(entry.name)}</div><div className="waiting-row-main"><div className="row-title">{entry.name}</div><div className="row-description">{entry.request}</div><div className="row-meta">{entry.contact || "No contact details"} · Added {shortDate(entry.addedDate)}</div></div><button className="button small" aria-label={`Edit ${entry.name}`} onClick={() => onEdit(entry)}><Pencil size={13} /> Edit</button></div>)}</div>}</>;
 }
 
+type BookingRow = { id: string; slot_date: string; slot_time: string; kind: string; customer_name: string; phone_number?: string; email?: string; notes?: string; status: string };
+
+function BookingsView() {
+  const [pass, setPass] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem("stitchflow-studio-key") || ""));
+  const [draftPass, setDraftPass] = useState("");
+  const [rows, setRows] = useState<BookingRow[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [shareUrl, setShareUrl] = useState("/book");
+
+  useEffect(() => { setShareUrl(`${window.location.origin}/book`); }, []);
+
+  const load = useCallback(async (key: string) => {
+    if (!supabase || !key) return;
+    setBusy(true);
+    const claim = await supabase.rpc("studio_claim", { pass: key });
+    if (claim.error || claim.data !== true) { setRows(null); setError("That passphrase was not accepted."); setBusy(false); return; }
+    const result = await supabase.rpc("studio_bookings", { pass: key });
+    if (result.error) { setError("Could not load bookings right now."); setBusy(false); return; }
+    setRows((result.data || []) as BookingRow[]);
+    setError("");
+    setBusy(false);
+  }, []);
+
+  useEffect(() => { if (pass) void load(pass); }, [pass, load]);
+
+  const unlock = (event: FormEvent) => {
+    event.preventDefault();
+    const key = draftPass.trim();
+    if (!key) return;
+    try { window.localStorage.setItem("stitchflow-studio-key", key); } catch { /* storage is optional */ }
+    setPass(key);
+    setDraftPass("");
+  };
+
+  const forget = () => {
+    try { window.localStorage.removeItem("stitchflow-studio-key"); } catch { /* storage is optional */ }
+    setPass("");
+    setRows(null);
+    setError("");
+  };
+
+  const changeStatus = async (id: string, status: string) => {
+    if (!supabase) return;
+    await supabase.rpc("studio_set_booking_status", { pass, booking_id: id, new_status: status });
+    void load(pass);
+  };
+
+  const copyLink = async () => {
+    try { await navigator.clipboard.writeText(shareUrl); setCopied(true); window.setTimeout(() => setCopied(false), 2000); }
+    catch { setError("Could not copy automatically — long-press the link to copy it."); }
+  };
+
+  const visible = (rows || []).filter((row) => row.status !== "Declined");
+  const pendingCount = (rows || []).filter((row) => row.status === "Requested").length;
+
+  return <>
+    <div className="page-heading"><div><h1>Bookings</h1><p>Drop-off and pick-up times customers chose from your booking link.</p></div></div>
+
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="eyebrow">Your booking link</div>
+      <div className="booking-link-row">
+        <code className="booking-link">{shareUrl}</code>
+        <button className="button" onClick={copyLink}>{copied ? "Copied" : "Copy link"}</button>
+      </div>
+      <div className="row-meta">Send this to customers, or put it in your Instagram bio.</div>
+    </div>
+
+    {!supabase && <div className="empty">
+      Online booking is not connected yet. Add <strong>NEXT_PUBLIC_SUPABASE_URL</strong> and <strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong>, then run <strong>supabase/schema-bookings.sql</strong>.
+    </div>}
+
+    {supabase && !pass && <form className="card form-card" onSubmit={unlock}>
+      <div className="eyebrow">Studio access</div>
+      <p className="row-meta" style={{ marginTop: 8 }}>Enter the passphrase you set in <code>studio_settings</code> to read booking requests. It is kept in this browser only.</p>
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="studio-pass">Passphrase</label>
+        <input id="studio-pass" type="password" value={draftPass} onChange={(event) => setDraftPass(event.target.value)} placeholder="Your studio passphrase" required />
+      </div>
+      <div className="form-actions"><button type="submit" className="button primary">Unlock bookings</button></div>
+    </form>}
+
+    {supabase && pass && <>
+      {error && <div className="booking-alert error">{error}</div>}
+      <div className="section-heading" style={{ marginTop: 4 }}>
+        <h2>{busy && rows === null ? "Loading…" : `${pendingCount} awaiting confirmation`}</h2>
+        <button onClick={forget}>Lock</button>
+      </div>
+      <div className="stack">{rows !== null && visible.length === 0 ? <div className="empty">No booking requests yet.</div> : visible.map((row) => <div className="booking-request" key={row.id}>
+        <div className="booking-request-when">
+          <div className="row-title">{formatSlot(row.slot_time)}</div>
+          <div className="row-meta">{prettyDay(row.slot_date)}</div>
+        </div>
+        <div className="booking-request-main">
+          <div className="row-title">{row.customer_name} <span className="muted">{row.kind}</span></div>
+          <div className="row-meta">{row.phone_number || row.email || "No contact details"}</div>
+          {row.notes && <div className="row-description">{row.notes}</div>}
+        </div>
+        <div className="row-actions">
+          <span className={`badge ${row.status === "Confirmed" ? "success" : statusTone(row.status)}`}>{row.status}</span>
+          {row.status !== "Confirmed" && <button className="button small" onClick={() => changeStatus(row.id, "Confirmed")}><CheckCircle2 size={13} /> Confirm</button>}
+          <button className="button small" onClick={() => changeStatus(row.id, "Declined")}><X size={13} /> Decline</button>
+        </div>
+      </div>)}</div>
+    </>}
+  </>;
+}
+
 function TeamView() {
   return <><div className="page-heading"><div><h1>Team</h1><p>People who keep Rachel&apos;s Seamstress Studio moving.</p></div></div><div className="grid-2"><div className="card"><div className="avatar">RV</div><h3 style={{ marginTop: 12 }}>Rachel Valenzuela</h3><div className="muted">Owner · Studio manager</div><div className="stat-line" style={{ marginTop: 14 }}><span>Access</span><strong>Admin</strong></div></div><div className="card"><div className="avatar green">AS</div><h3 style={{ marginTop: 12 }}>Alterations team</h3><div className="muted">Shared workspace</div><div className="stat-line" style={{ marginTop: 14 }}><span>Open jobs</span><strong>3</strong></div></div></div></>;
 }
@@ -756,6 +868,7 @@ export default function Home() {
       {view === "customers" && (!detail || detail.type !== "customer") && <CustomersView data={data} go={go} onSelect={openCustomer} onEdit={setEditingCustomer} />}
       {view === "leads" && selectedLead ? <LeadDetailView lead={selectedLead} onBack={closeDetail} onEdit={setEditingLead} /> : null}
       {view === "leads" && (!detail || detail.type !== "lead") && <LeadsView data={data} go={go} onSelect={openLead} onEdit={setEditingLead} />}
+      {view === "bookings" && <BookingsView />}
       {view === "appointments" && <AppointmentsView data={data} go={go} onComplete={completeAppointment} onEdit={setEditingAppointment} />}
       {view === "finances" && <FinancesView data={data} go={go} onEditExpense={setEditingExpense} toast={toast} onManageCategories={() => setCategoriesOpen(true)} />}
       {view === "waiting" && <WaitingView entries={waitingList} customers={data.customers} go={go} onEdit={setEditingWaiting} />}

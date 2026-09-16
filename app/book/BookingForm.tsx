@@ -8,16 +8,18 @@ import {
   bookingConfig,
   bookingKinds,
   bookableDays,
+  closedDaysLabel,
   formatSlot,
   isSlotAvailable,
+  monthGrid,
+  monthIndexOf,
+  monthTitle,
   openingHoursLabel,
-  prettyDay,
+  parseDateKey,
   prettyDayLong,
   slotId,
   slotTimeKeys,
 } from "@/lib/booking";
-
-const DAY_CHIPS = 14;
 
 export default function BookingForm() {
   // Dates are resolved on the client only. Rendering them during SSR would
@@ -39,27 +41,46 @@ export default function BookingForm() {
 
   useEffect(() => { setNow(new Date()); }, []);
 
-  const days = useMemo(() => (now ? bookableDays(now).slice(0, DAY_CHIPS) : []), [now]);
+  const bookable = useMemo(() => (now ? bookableDays(now) : []), [now]);
   const slots = useMemo(() => slotTimeKeys(), []);
 
-  // Open on the first day that actually has a free slot. Landing after hours
-  // (or inside the notice window) would otherwise present a dead end.
+  // Days that are open AND still have at least one free slot. Offering a day
+  // with nothing left on it only leads the customer into a dead end.
+  const daysWithSlots = useMemo(() => {
+    const set = new Set<string>();
+    if (!now) return set;
+    for (const key of bookable) {
+      if (slots.some((time) => isSlotAvailable(key, time, booked, now))) set.add(key);
+    }
+    return set;
+  }, [bookable, slots, booked, now]);
+
+  // Open on the first day that actually has availability.
   useEffect(() => {
-    if (day || !now || days.length === 0) return;
-    const firstOpen = days.find((key) => slots.some((time) => isSlotAvailable(key, time, booked, now)));
-    setDay(firstOpen || days[0]);
-  }, [day, now, days, slots, booked]);
+    if (day || !now || bookable.length === 0) return;
+    setDay(bookable.find((key) => daysWithSlots.has(key)) || bookable[0]);
+  }, [day, now, bookable, daysWithSlots]);
 
   const loadBooked = useCallback(async () => {
-    if (!supabase || days.length === 0) { setLoadingSlots(false); return; }
-    const { data, error: rpcError } = await supabase.rpc("booked_slots", { from_date: days[0], to_date: days[days.length - 1] });
+    if (!supabase || bookable.length === 0) { setLoadingSlots(false); return; }
+    const { data, error: rpcError } = await supabase.rpc("booked_slots", { from_date: bookable[0], to_date: bookable[bookable.length - 1] });
     if (rpcError) { setLoadingSlots(false); return; }
     const rows = (data || []) as { slot_date: string; slot_time: string }[];
     setBooked(new Set(rows.map((row) => slotId(row.slot_date, row.slot_time))));
     setLoadingSlots(false);
-  }, [days]);
+  }, [bookable]);
 
   useEffect(() => { void loadBooked(); }, [loadBooked]);
+
+  // Month cursor, stored as year*12+month so it compares as a plain number.
+  const [cursor, setCursor] = useState<number | null>(null);
+  useEffect(() => {
+    if (cursor === null && day) setCursor(monthIndexOf(day));
+  }, [cursor, day]);
+
+  const firstMonth = bookable.length ? monthIndexOf(bookable[0]) : 0;
+  const lastMonth = bookable.length ? monthIndexOf(bookable[bookable.length - 1]) : 0;
+  const cells = useMemo(() => (cursor === null ? [] : monthGrid(Math.floor(cursor / 12), cursor % 12)), [cursor]);
 
   const available = useMemo(
     () => slots.filter((time) => now && day && isSlotAvailable(day, time, booked, now)),
@@ -131,19 +152,35 @@ export default function BookingForm() {
 
     <div className="booking-section">
       <h2 className="booking-label">1. Pick a day</h2>
-      {!now ? <div className="booking-muted">Loading available days…</div> : <div className="booking-days">
-        {days.map((key) => <button
-          key={key}
-          type="button"
-          className={`booking-day ${day === key ? "active" : ""}`}
-          aria-pressed={day === key}
-          onClick={() => { setDay(key); setSlot(""); }}
-        >{prettyDay(key)}</button>)}
+      {cursor === null ? <div className="booking-muted">Loading available days…</div> : <div className="booking-cal">
+        <div className="booking-cal-head">
+          <button type="button" className="booking-cal-nav" aria-label="Previous month" disabled={cursor <= firstMonth} onClick={() => setCursor(cursor - 1)}>‹</button>
+          <div className="booking-cal-title">{monthTitle(Math.floor(cursor / 12), cursor % 12)}</div>
+          <button type="button" className="booking-cal-nav" aria-label="Next month" disabled={cursor >= lastMonth} onClick={() => setCursor(cursor + 1)}>›</button>
+        </div>
+        <div className="booking-cal-dow">{["S", "M", "T", "W", "T", "F", "S"].map((label, index) => <span key={index}>{label}</span>)}</div>
+        <div className="booking-cal-grid">
+          {cells.map((key) => {
+            const inMonth = monthIndexOf(key) === cursor;
+            const selectable = inMonth && daysWithSlots.has(key);
+            const isSelected = key === day;
+            return <button
+              key={key}
+              type="button"
+              aria-label={prettyDayLong(key)}
+              aria-pressed={isSelected}
+              disabled={!selectable}
+              className={`booking-cal-day${isSelected ? " active" : ""}${selectable ? "" : " off"}${inMonth ? "" : " outside"}`}
+              onClick={() => { setDay(key); setSlot(""); }}
+            >{parseDateKey(key).getDate()}</button>;
+          })}
+        </div>
+        <div className="booking-cal-hint">{closedDaysLabel()}{bookingConfig.allowSameDay ? "" : " Bookings start tomorrow."}</div>
       </div>}
     </div>
 
     <div className="booking-section">
-      <h2 className="booking-label">2. Pick a time</h2>
+      <h2 className="booking-label">2. Pick a time{day ? ` · ${prettyDayLong(day)}` : ""}</h2>
       {loadingSlots ? <div className="booking-muted">Loading available times…</div> : available.length === 0
         ? <div className="booking-muted">No times available on this day. Try another — bookings need at least {bookingConfig.leadHours} hours&apos; notice.</div>
         : <div className="booking-slots">

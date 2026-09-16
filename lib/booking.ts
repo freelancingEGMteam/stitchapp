@@ -15,6 +15,12 @@ export const bookingConfig = {
   openDays: [2, 3, 4, 5, 6],
   /** Nothing can be booked with less notice than this. */
   leadHours: 12,
+  /**
+   * When false, the earliest bookable day is tomorrow. Today is left out
+   * because the notice period above would rule its slots out anyway;
+   * set true if the notice is ever lowered to allow same-day bookings.
+   */
+  allowSameDay: false,
   /** How far ahead the public page will offer slots. */
   horizonDays: 60,
 };
@@ -64,14 +70,31 @@ export const slotDateTime = (dayKey: string, slot: string) => {
 
 export const slotId = (dayKey: string, slot: string) => `${dayKey} ${slot}`;
 
-/** Open days from tomorrow up to the horizon. */
+/** Open days from tomorrow (or today when allowSameDay) up to the horizon. */
 export const bookableDays = (now = new Date()): string[] => {
   const out: string[] = [];
-  for (let offset = 0; offset <= bookingConfig.horizonDays; offset += 1) {
+  const start = bookingConfig.allowSameDay ? 0 : 1;
+  for (let offset = start; offset <= bookingConfig.horizonDays + start; offset += 1) {
     const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
     if (isOpenDay(day)) out.push(dateKey(day));
   }
   return out;
+};
+
+/** Six weeks of date keys covering the month, beginning on a Sunday. */
+export const monthGrid = (year: number, month: number): string[] => {
+  const first = new Date(year, month, 1);
+  const start = new Date(year, month, 1 - first.getDay());
+  return Array.from({ length: 42 }, (_, index) =>
+    dateKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + index)));
+};
+
+export const monthTitle = (year: number, month: number) =>
+  new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(year, month, 1));
+
+export const monthIndexOf = (key: string) => {
+  const day = parseDateKey(key);
+  return day.getFullYear() * 12 + day.getMonth();
 };
 
 export const isSlotAvailable = (dayKey: string, slot: string, booked: Set<string>, now = new Date()) => {
@@ -93,4 +116,11 @@ export const openingHoursLabel = () => {
     ? `${dayNames[days[0]].slice(0, 3)}–${dayNames[days[days.length - 1]].slice(0, 3)}`
     : days.map((day) => dayNames[day].slice(0, 3)).join(", ");
   return `${label} · ${formatSlot(bookingConfig.openTime)} – ${formatSlot(bookingConfig.closeTime)}`;
+};
+
+/** e.g. "Closed Sundays and Mondays." — empty when open every day. */
+export const closedDaysLabel = () => {
+  const closed = [0, 1, 2, 3, 4, 5, 6].filter((day) => !bookingConfig.openDays.includes(day));
+  if (closed.length === 0) return "";
+  return `Closed ${closed.map((day) => `${dayNames[day]}s`).join(" and ")}.`;
 };

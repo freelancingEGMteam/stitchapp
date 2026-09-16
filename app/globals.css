@@ -281,9 +281,20 @@ a { color: inherit; text-decoration: none; }
 .booking-kind.active { background: var(--rose); border-color: var(--rose); color: #fff; }
 .booking-section { margin-bottom: 22px; }
 .booking-label { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--rose-deep); font-weight: 650; }
-.booking-days { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
-.booking-day { flex: 0 0 auto; padding: 9px 13px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
-.booking-day.active { border-color: var(--rose); background: var(--rose-soft); color: var(--rose-deep); }
+.booking-cal { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface-soft); }
+.booking-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.booking-cal-title { font-weight: 650; font-size: 15px; }
+.booking-cal-nav { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 17px; line-height: 1; display: grid; place-items: center; }
+.booking-cal-nav:disabled { opacity: .35; cursor: not-allowed; }
+.booking-cal-dow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 4px; }
+.booking-cal-dow span { text-align: center; font-size: 11px; color: var(--muted); font-weight: 650; }
+.booking-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.booking-cal-day { aspect-ratio: 1 / 1; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; display: grid; place-items: center; padding: 0; }
+.booking-cal-day.off { color: #c9c2b9; background: transparent; border-color: transparent; cursor: not-allowed; }
+.booking-cal-day.outside { visibility: hidden; }
+.booking-cal-day:not(:disabled):hover { border-color: var(--rose); }
+.booking-cal-day.active { background: var(--rose); border-color: var(--rose); color: #fff; }
+.booking-cal-hint { margin-top: 10px; color: var(--muted); font-size: 12px; }
 .booking-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
 .booking-slot { padding: 11px 8px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink); font-size: 13px; font-weight: 600; }
 .booking-slot.active { background: var(--green); border-color: var(--green); color: #fff; }

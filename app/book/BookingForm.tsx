@@ -398,7 +398,13 @@ export default function BookingForm() {
         <span>{kind}</span><span>·</span><span>{prettyDayLong(day)}</span><span>·</span><span>{formatSlot(slot)}</span>
       </div>
       <div className="booking-fields">
-        <div className="booking-field full">
+        <label className="booking-field"><span>Name</span>
+          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" required /></label>
+        <label className="booking-field"><span>Phone</span>
+          <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 123-4567" /></label>
+        <label className="booking-field"><span>Email</span>
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></label>
+        <div className="booking-field full booking-field-address">
           <label htmlFor="booking-location">{kind === "Pick up" ? "Where should we collect from?" : "Your address"}</label>
           <div className="booking-address">
             <input
@@ -430,17 +436,11 @@ export default function BookingForm() {
             </ul>}
           </div>
           <em className="booking-hint">
-            We travel {travelAreaLabel()}. Pick your address from the suggestions so we can check it.
+            We travel {travelAreaLabel()}. Pick from the suggestions so we can check it.
           </em>
           {locationNote === "inside" && <span className="booking-area ok"><CheckCircle2 size={14} /> That address is inside our travel area.</span>}
           {locationNote && locationNote !== "inside" && <span className="booking-area bad"><MapPin size={14} /> {locationNote}</span>}
         </div>
-        <label className="booking-field"><span>Name</span>
-          <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" required /></label>
-        <label className="booking-field"><span>Phone</span>
-          <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 123-4567" /></label>
-        <label className="booking-field"><span>Email</span>
-          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></label>
         <label className="booking-field full"><span>{notesCopy.label}</span>
           <textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={notesCopy.placeholder} /></label>
       </div>

@@ -320,9 +320,10 @@ a { color: inherit; text-decoration: none; }
 .booking-summary { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
 .booking-summary span:nth-child(odd) { color: var(--ink); font-weight: 600; }
 .booking-back { width: 100%; margin-top: 10px; padding: 10px; border: 0; background: transparent; color: var(--rose-deep); font-size: 13px; font-weight: 600; }
-.booking-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.booking-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px 12px; align-items: start; }
 .booking-field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .booking-field.full { grid-column: 1 / -1; }
+.booking-field-address { padding-top: 4px; border-top: 1px solid var(--border); margin-top: 2px; }
 .booking-field input, .booking-field textarea { border: 1px solid var(--border); border-radius: 9px; padding: 10px 11px; background: var(--surface-soft); color: var(--ink); font-size: 14px; font-family: inherit; }
 .booking-field textarea { min-height: 74px; resize: vertical; }
 .booking-field input:focus, .booking-field textarea:focus { outline: 2px solid var(--rose-soft); border-color: var(--rose); }

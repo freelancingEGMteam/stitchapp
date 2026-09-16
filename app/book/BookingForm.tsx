@@ -30,23 +30,61 @@ const MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
 
 // Minimal shapes for the parts of the Maps API we touch, so we do not need
 // to pull in @types/google.maps as a dependency.
+//
+// These follow the current Places API (Autocomplete Data). The legacy
+// google.maps.places.Autocomplete widget is NOT available to new Google
+// Cloud projects, so binding to an <input> is no longer an option. The
+// programmatic API also lets us keep our own styled suggestion list.
+type GoogleLatLng = { lat: () => number; lng: () => number };
 type GooglePlace = {
-  formatted_address?: string;
-  name?: string;
-  geometry?: { location?: { lat: () => number; lng: () => number } };
+  formattedAddress?: string;
+  displayName?: string;
+  location?: GoogleLatLng;
+  fetchFields: (options: { fields: string[] }) => Promise<void>;
 };
-type GoogleAutocomplete = {
-  addListener: (event: string, handler: () => void) => void;
-  getPlace: () => GooglePlace;
+type GooglePrediction = {
+  text?: { text?: string };
+  mainText?: { text?: string };
+  toPlace: () => GooglePlace;
 };
-type GoogleMaps = {
-  maps: {
-    Circle: new (options: unknown) => { getBounds: () => unknown };
-    places: { Autocomplete: new (input: HTMLInputElement, options: unknown) => GoogleAutocomplete };
+type GooglePlacesLibrary = {
+  AutocompleteSuggestion: {
+    fetchAutocompleteSuggestions: (request: unknown) => Promise<{ suggestions?: { placePrediction?: GooglePrediction }[] }>;
   };
 };
+type GoogleMapsNamespace = { importLibrary: (name: string) => Promise<GooglePlacesLibrary> };
 
-type Suggestion = { label: string; lat: number; lon: number };
+/** `prediction` is set for Google results; `lat`/`lon` for Photon results. */
+type Suggestion = { label: string; lat?: number; lon?: number; prediction?: GooglePrediction };
+
+const loadGooglePlaces = async (): Promise<GooglePlacesLibrary | null> => {
+  const google = (window as unknown as { google?: { maps?: GoogleMapsNamespace } }).google;
+  if (!google?.maps?.importLibrary) return null;
+  try {
+    return await google.maps.importLibrary("places");
+  } catch {
+    return null;
+  }
+};
+
+/** Google Places suggestions, biased to the studio's travel area. */
+const lookupWithGoogle = async (query: string, signal: AbortSignal): Promise<Suggestion[]> => {
+  const places = await loadGooglePlaces();
+  if (!places || signal.aborted) return [];
+  const { suggestions } = await places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+    input: query,
+    includedRegionCodes: ["us"],
+    locationBias: {
+      center: { lat: serviceArea.lat, lng: serviceArea.lng },
+      radius: serviceArea.suggestRadiusMiles * 1609.34,
+    },
+  });
+  return (suggestions || []).map((entry): Suggestion | null => {
+    const prediction = entry.placePrediction;
+    const label = prediction?.text?.text || prediction?.mainText?.text || "";
+    return label && prediction ? { label, prediction } : null;
+  }).filter((item): item is Suggestion => item !== null);
+};
 
 type PhotonFeature = {
   properties?: Record<string, string | undefined>;
@@ -54,16 +92,16 @@ type PhotonFeature = {
 };
 
 /**
- * Keyless address suggestions from Photon (OpenStreetMap), used when no
- * Google Maps key is configured. Results are biased towards the studio so
- * nearby addresses come first.
+ * Keyless fallback using Photon (OpenStreetMap), for when no Google Maps key
+ * is configured. Results are biased towards the studio so nearby addresses
+ * come first.
  */
 const photonLookup = async (query: string, signal: AbortSignal): Promise<Suggestion[]> => {
   const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}`
     + `&lat=${serviceArea.lat}&lon=${serviceArea.lng}&limit=5&lang=en`;
   const response = await fetch(url, { signal });
   const data = await response.json() as { features?: PhotonFeature[] };
-  return (data.features || []).map((feature) => {
+  return (data.features || []).map((feature): Suggestion | null => {
     const p = feature.properties || {};
     const street = [p.housenumber, p.street].filter(Boolean).join(" ") || p.name || "";
     const label = [street, p.city || p.town || p.village, p.state, p.postcode].filter(Boolean).join(", ");
@@ -89,11 +127,9 @@ export default function BookingForm() {
   const [location, setLocation] = useState("");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locationNote, setLocationNote] = useState("");
-  const [mapsReady, setMapsReady] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const addressRef = useRef<HTMLInputElement | null>(null);
-  const autocompleteRef = useRef<GoogleAutocomplete | null>(null);
   const skipLookupRef = useRef(false);
   const [booked, setBooked] = useState<Set<string>>(new Set());
   const [loadingSlots, setLoadingSlots] = useState(true);
@@ -143,63 +179,33 @@ export default function BookingForm() {
   const lastMonth = bookable.length ? monthIndexOf(bookable[bookable.length - 1]) : 0;
   const cells = useMemo(() => (cursor === null ? [] : monthGrid(Math.floor(cursor / 12), cursor % 12)), [cursor]);
 
-  // Load the Maps script once, and only when a key is configured. Without a
-  // key the address field stays a plain required text input.
+  // Load the Maps bootstrap once, and only when a key is configured. The
+  // Places library itself is pulled in on demand by loadGooglePlaces().
   useEffect(() => {
     if (!MAPS_KEY) return;
-    if ((window as unknown as { google?: GoogleMaps }).google?.maps?.places) { setMapsReady(true); return; }
-    const existing = document.getElementById("sf-google-maps") as HTMLScriptElement | null;
-    const onLoad = () => setMapsReady(true);
-    if (existing) { existing.addEventListener("load", onLoad); return () => existing.removeEventListener("load", onLoad); }
+    if (document.getElementById("sf-google-maps")) return;
     const script = document.createElement("script");
     script.id = "sf-google-maps";
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places&loading=async`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${MAPS_KEY}&libraries=places&loading=async&v=weekly`;
     script.async = true;
-    script.addEventListener("load", onLoad);
     document.head.appendChild(script);
-    return () => script.removeEventListener("load", onLoad);
   }, []);
 
-  // Bind autocomplete, biased to the travel area so nearby addresses surface
-  // first. strictBounds keeps suggestions inside that circle.
+  // One lookup path for both providers. Google when a key is configured,
+  // otherwise the keyless Photon service. Debounced, and cancelled when the
+  // query changes so stale results never land.
   useEffect(() => {
-    if (!mapsReady || !addressRef.current || autocompleteRef.current) return;
-    const google = (window as unknown as { google?: GoogleMaps }).google;
-    if (!google?.maps?.places) return;
-    const circle = new google.maps.Circle({
-      center: { lat: serviceArea.lat, lng: serviceArea.lng },
-      radius: serviceArea.suggestRadiusMiles * 1609.34,
-    });
-    const autocomplete = new google.maps.places.Autocomplete(addressRef.current, {
-      componentRestrictions: { country: "us" },
-      bounds: circle.getBounds(),
-      strictBounds: true,
-      fields: ["formatted_address", "name", "geometry"],
-    });
-    autocomplete.addListener("place_changed", () => {
-      const place = autocomplete.getPlace();
-      const address = place.formatted_address || place.name || "";
-      const point = place.geometry?.location;
-      if (address) setLocation(address);
-      if (!point) { setCoords(null); setLocationNote(""); return; }
-      const lat = point.lat();
-      const lng = point.lng();
-      setCoords({ lat, lng });
-      setLocationNote(withinServiceArea(lat, lng) ? "inside" : outsideAreaMessage(lat, lng));
-    });
-    autocompleteRef.current = autocomplete;
-  }, [mapsReady]);
-
-  // Keyless suggestions. Skipped entirely when Google is driving the field.
-  useEffect(() => {
-    if (MAPS_KEY) return;
     if (skipLookupRef.current) { skipLookupRef.current = false; return; }
     const query = location.trim();
     if (query.length < 4) { setSuggestions([]); setActiveIndex(-1); return; }
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        setSuggestions(await photonLookup(query, controller.signal));
+        const found = MAPS_KEY
+          ? await lookupWithGoogle(query, controller.signal)
+          : await photonLookup(query, controller.signal);
+        if (controller.signal.aborted) return;
+        setSuggestions(found);
         setActiveIndex(-1);
       } catch {
         // Aborted, or the lookup service is unreachable. Keep what was typed.
@@ -208,20 +214,43 @@ export default function BookingForm() {
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [location]);
 
-  const chooseSuggestion = (suggestion: Suggestion) => {
+  const chooseSuggestion = async (suggestion: Suggestion) => {
     skipLookupRef.current = true;
-    setLocation(suggestion.label);
-    setCoords({ lat: suggestion.lat, lng: suggestion.lon });
-    setLocationNote(withinServiceArea(suggestion.lat, suggestion.lon) ? "inside" : outsideAreaMessage(suggestion.lat, suggestion.lon));
     setSuggestions([]);
     setActiveIndex(-1);
+
+    let label = suggestion.label;
+    let point = suggestion.lat !== undefined && suggestion.lon !== undefined
+      ? { lat: suggestion.lat, lng: suggestion.lon }
+      : null;
+
+    // Google returns a prediction; the coordinates need a second call.
+    if (!point && suggestion.prediction) {
+      try {
+        const place = suggestion.prediction.toPlace();
+        await place.fetchFields({ fields: ["formattedAddress", "location"] });
+        if (place.location) point = { lat: place.location.lat(), lng: place.location.lng() };
+        if (place.formattedAddress) label = place.formattedAddress;
+      } catch {
+        // Leave the typed value; the studio can confirm the address later.
+      }
+    }
+
+    setLocation(label);
+    if (point) {
+      setCoords(point);
+      setLocationNote(withinServiceArea(point.lat, point.lng) ? "inside" : outsideAreaMessage(point.lat, point.lng));
+    } else {
+      setCoords(null);
+      setLocationNote("");
+    }
   };
 
   const onAddressKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (suggestions.length === 0) return;
     if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex((index) => (index + 1) % suggestions.length); }
     else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length); }
-    else if (event.key === "Enter" && activeIndex >= 0) { event.preventDefault(); chooseSuggestion(suggestions[activeIndex]); }
+    else if (event.key === "Enter" && activeIndex >= 0) { event.preventDefault(); void chooseSuggestion(suggestions[activeIndex]); }
     else if (event.key === "Escape") { setSuggestions([]); setActiveIndex(-1); }
   };
 
@@ -396,7 +425,7 @@ export default function BookingForm() {
                 aria-selected={index === activeIndex}
                 className={index === activeIndex ? "active" : undefined}
                 onMouseEnter={() => setActiveIndex(index)}
-                onMouseDown={(event) => { event.preventDefault(); chooseSuggestion(suggestion); }}
+                onMouseDown={(event) => { event.preventDefault(); void chooseSuggestion(suggestion); }}
               >{suggestion.label}</li>)}
             </ul>}
           </div>

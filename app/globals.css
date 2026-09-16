@@ -367,6 +367,19 @@ a { color: inherit; text-decoration: none; }
 .hours-days { display: flex; flex-wrap: wrap; gap: 6px; }
 .hours-day { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink); font-size: 13px; font-weight: 600; }
 .hours-day.on { background: var(--rose); border-color: var(--rose); color: #fff; }
+
+/* Studio sign-in */
+.auth-card { width: min(440px, 100%); margin: 0 auto; }
+.auth-provider { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-weight: 600; font-size: 14px; }
+.auth-provider:hover:not(:disabled) { border-color: var(--rose); background: #fff8f6; }
+.auth-provider:disabled { opacity: .6; cursor: not-allowed; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 16px 0; color: var(--muted); font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.auth-sent { text-align: center; }
+.auth-sent-icon { color: var(--rose); margin-bottom: 8px; }
+.auth-sent h2 { margin: 6px 0 10px; font-size: 21px; }
+.auth-boot { display: grid; place-items: center; min-height: 100vh; color: var(--muted); font-size: 14px; }
+.auth-signout { margin-top: auto; width: 100%; font-size: 11px; color: var(--muted); }
 @media (max-width: 720px) {
   .booking-request { align-items: flex-start; flex-wrap: wrap; }
   .booking-request-when { flex: 0 0 78px; }

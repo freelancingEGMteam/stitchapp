@@ -36,7 +36,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
 import { BookingRules, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay } from "@/lib/booking";
+import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import SignIn from "./SignIn";
 
 type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "bookings" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead";
 type WaitingEntry = { id: string; name: string; contact?: string; request: string; notes?: string; addedDate: string };
@@ -542,7 +544,7 @@ function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry
 
 type BookingRow = { id: string; slot_date: string; slot_time: string; kind: string; customer_name: string; phone_number?: string; email?: string; location?: string; notes?: string; status: string };
 
-function BookingHoursEditor({ pass }: { pass: string }) {
+function BookingHoursEditor() {
   const [draft, setDraft] = useState<BookingRules | null>(null);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
@@ -565,7 +567,6 @@ function BookingHoursEditor({ pass }: { pass: string }) {
     if (draft.openDays.length === 0) { setError("Pick at least one open day."); setNote(""); return; }
     setSaving(true); setError(""); setNote("");
     const { data, error: rpcError } = await supabase.rpc("studio_save_booking_settings", {
-      pass,
       patch: {
         slot_minutes: draft.slotMinutes,
         open_time: draft.openTime,
@@ -642,8 +643,6 @@ function BookingHoursEditor({ pass }: { pass: string }) {
 }
 
 function BookingsView() {
-  const [pass, setPass] = useState(() => (typeof window === "undefined" ? "" : window.localStorage.getItem("stitchflow-studio-key") || ""));
-  const [draftPass, setDraftPass] = useState("");
   const [rows, setRows] = useState<BookingRow[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -652,40 +651,22 @@ function BookingsView() {
 
   useEffect(() => { setShareUrl(`${window.location.origin}/book`); }, []);
 
-  const load = useCallback(async (key: string) => {
-    if (!supabase || !key) return;
+  const load = useCallback(async () => {
+    if (!supabase) return;
     setBusy(true);
-    const claim = await supabase.rpc("studio_claim", { pass: key });
-    if (claim.error || claim.data !== true) { setRows(null); setError("That passphrase was not accepted."); setBusy(false); return; }
-    const result = await supabase.rpc("studio_bookings", { pass: key });
+    const result = await supabase.rpc("studio_bookings");
     if (result.error) { setError("Could not load bookings right now."); setBusy(false); return; }
     setRows((result.data || []) as BookingRow[]);
     setError("");
     setBusy(false);
   }, []);
 
-  useEffect(() => { if (pass) void load(pass); }, [pass, load]);
-
-  const unlock = (event: FormEvent) => {
-    event.preventDefault();
-    const key = draftPass.trim();
-    if (!key) return;
-    try { window.localStorage.setItem("stitchflow-studio-key", key); } catch { /* storage is optional */ }
-    setPass(key);
-    setDraftPass("");
-  };
-
-  const forget = () => {
-    try { window.localStorage.removeItem("stitchflow-studio-key"); } catch { /* storage is optional */ }
-    setPass("");
-    setRows(null);
-    setError("");
-  };
+  useEffect(() => { void load(); }, [load]);
 
   const changeStatus = async (id: string, status: string) => {
     if (!supabase) return;
-    await supabase.rpc("studio_set_booking_status", { pass, booking_id: id, new_status: status });
-    void load(pass);
+    await supabase.rpc("studio_set_booking_status", { booking_id: id, new_status: status });
+    void load();
   };
 
   const copyLink = async () => {
@@ -712,21 +693,10 @@ function BookingsView() {
       Online booking is not connected yet. Add <strong>NEXT_PUBLIC_SUPABASE_URL</strong> and <strong>NEXT_PUBLIC_SUPABASE_ANON_KEY</strong>, then run <strong>supabase/schema-bookings.sql</strong>.
     </div>}
 
-    {supabase && !pass && <form className="card form-card" onSubmit={unlock}>
-      <div className="eyebrow">Studio access</div>
-      <p className="row-meta" style={{ marginTop: 8 }}>Enter the passphrase you set in <code>studio_settings</code> to read booking requests. It is kept in this browser only.</p>
-      <div className="field" style={{ marginTop: 12 }}>
-        <label htmlFor="studio-pass">Passphrase</label>
-        <input id="studio-pass" type="password" value={draftPass} onChange={(event) => setDraftPass(event.target.value)} placeholder="Your studio passphrase" required />
-      </div>
-      <div className="form-actions"><button type="submit" className="button primary">Unlock bookings</button></div>
-    </form>}
-
-    {supabase && pass && <>
+    {supabase && <>
       {error && <div className="booking-alert error">{error}</div>}
       <div className="section-heading" style={{ marginTop: 4 }}>
         <h2>{busy && rows === null ? "Loading…" : `${pendingCount} awaiting confirmation`}</h2>
-        <button onClick={forget}>Lock</button>
       </div>
       <div className="stack">{rows !== null && visible.length === 0 ? <div className="empty">No booking requests yet.</div> : visible.map((row) => <div className="booking-request" key={row.id}>
         <div className="booking-request-when">
@@ -745,7 +715,7 @@ function BookingsView() {
           <button className="button small" onClick={() => changeStatus(row.id, "Declined")}><X size={13} /> Decline</button>
         </div>
       </div>)}</div>
-      <BookingHoursEditor pass={pass} />
+      <BookingHoursEditor />
     </>}
   </>;
 }
@@ -833,6 +803,8 @@ function NewWaitingView({ customers, onCreate, go }: { customers: Customer[]; on
 }
 
 export default function Home() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [view, setView] = useState<View>("dashboard");
   const [data, setData] = useState<AppData>(() => loadStoredData());
   const [waitingList, setWaitingList] = useState<WaitingEntry[]>(() => loadStoredWaitingList());
@@ -852,6 +824,17 @@ export default function Home() {
   const [editingLifecycle, setEditingLifecycle] = useState<Lifecycle | null>(null);
   const [expenseCategories, setExpenseCategories] = useState<string[]>(() => loadStoredCategories());
   const [categoriesOpen, setCategoriesOpen] = useState(false);
+
+  // The studio screens sit behind a sign-in. /book stays public.
+  useEffect(() => {
+    if (!supabase) { setAuthReady(true); return; }
+    void supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    return () => listener.subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!supabase) return;
@@ -959,8 +942,11 @@ export default function Home() {
   const selectedJob = detail?.type === "job" ? data.jobs.find((item) => item.id === detail.id) : undefined;
   const selectedLead = detail?.type === "lead" ? data.leads.find((item) => item.id === detail.id) : undefined;
 
+  if (supabase && !authReady) return <div className="auth-boot">Loading studio…</div>;
+  if (supabase && !session) return <SignIn />;
+
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Scissors size={18} /></div><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div></div><button className="search-box" style={{ width: "100%" }} onClick={() => setSearchOpen(true)}><Search size={16} /><span style={{ fontSize: 14, color: "#a49e97" }}>Search...</span></button><nav className="nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav><div className="studio-name">Rachel&apos;s Seamstress Studio</div></aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Scissors size={18} /></div><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div></div><button className="search-box" style={{ width: "100%" }} onClick={() => setSearchOpen(true)}><Search size={16} /><span style={{ fontSize: 14, color: "#a49e97" }}>Search...</span></button><nav className="nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav><div className="studio-name">Rachel&apos;s Seamstress Studio</div>{supabase && session && <button className="nav-item auth-signout" onClick={() => void supabase?.auth.signOut()}>Sign out{session.user?.email ? ` · ${session.user.email}` : ""}</button>}</aside>
     <main className="main-shell"><div className="mobile-topbar"><button className="icon-button" aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((open) => !open)}>{mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}</button><div className="brand-name">Stitch &amp; Thread</div><button className="icon-button" aria-label="Search studio" onClick={() => { setMobileMenuOpen(false); setSearchOpen(true); }}><Search size={18} /></button></div>{mobileMenuOpen && <div className="mobile-menu-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setMobileMenuOpen(false)}><div className="mobile-menu-panel" role="dialog" aria-modal="true" aria-label="Navigation menu"><div className="mobile-menu-heading"><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div><button className="icon-button" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)}><X size={18} /></button></div><nav className="mobile-menu-nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav></div></div>}<div className="content" aria-label={`${title} page`}>
       {view === "dashboard" && <DashboardView data={data} go={go} onSelectJob={openJob} />}
       {view === "jobs" && selectedJob ? <JobDetailView job={selectedJob} data={data} onBack={closeDetail} onSelectJob={openJob} onEdit={setEditingJob} /> : null}

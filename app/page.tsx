@@ -343,12 +343,95 @@ function NewAppointmentView({ data, onCreate, go, initialCustomer }: { data: App
   return <><div className="page-heading"><div><h1>New Appointment</h1><p>Schedule a fitting, drop-off, or pickup and add it to Google Calendar.</p></div><button className="button" onClick={() => go("appointments")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="appointment-customer">Customer</label><input id="appointment-customer" list="appointment-customers" value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Search customers..." /><datalist id="appointment-customers">{data.customers.map((customer) => <option key={customer.id} value={customer.customer_name}>{customer.phone_number || customer.email || ""}</option>)}</datalist>{selectedCustomer && <div className="autocomplete-meta">{selectedCustomer.phone_number || "No phone"}{selectedCustomer.email ? ` · ${selectedCustomer.email}` : ""}</div>}</div><div className="field full"><label htmlFor="appointment-title">Appointment type</label><input id="appointment-title" value={title} onChange={(event) => setTitle(event.target.value)} required /></div><div className="field"><label htmlFor="appointment-date">Date</label><input id="appointment-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="appointment-time">Time</label><input id="appointment-time" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></div><div className="field full"><label htmlFor="appointment-notes">Notes</label><textarea id="appointment-notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Add any fitting or pickup details..." /></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("appointments")}>Cancel</button><button type="submit" className="button primary"><CalendarDays size={15} /> Save Appointment</button></div></form></>;
 }
 
+const monthKey = (value?: string) => {
+  const match = /^(\d{4})-(\d{2})/.exec(value || "");
+  return match ? `${match[1]}-${match[2]}` : "";
+};
+
+const monthLabel = (key: string) => new Intl.DateTimeFormat("en-US", { month: "short" }).format(new Date(`${key}-01T12:00:00`));
+
+const monthLong = (key: string) => new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(`${key}-01T12:00:00`));
+
+function monthlySeries(data: AppData) {
+  const buckets = new Map<string, { revenue: number; expenses: number }>();
+  const bucket = (key: string) => {
+    if (!buckets.has(key)) buckets.set(key, { revenue: 0, expenses: 0 });
+    return buckets.get(key)!;
+  };
+  data.jobs.forEach((job) => {
+    if ((job.status || "").toLowerCase() !== "paid") return;
+    const key = monthKey(job.delivery_date) || monthKey(job.start_date);
+    if (key) bucket(key).revenue += numeric(job.amount_to_charge);
+  });
+  data.expenses.forEach((expense) => {
+    const key = monthKey(expense.date);
+    if (key) bucket(key).expenses += numeric(expense.amount);
+  });
+  return [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([month, totals]) => ({ month, ...totals }));
+}
+
+const axisScale = (max: number) => {
+  if (!(max > 0)) return { step: 1, top: 1 };
+  const raw = max / 4;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10].map((c) => c * magnitude).find((c) => c >= raw) ?? 10 * magnitude;
+  return { step, top: Math.ceil(max / step) * step || step };
+};
+
+function FinanceChart({ data }: { data: AppData }) {
+  const series = monthlySeries(data);
+  if (series.length === 0) return <div className="card chart"><div className="empty">No monthly activity to chart yet.</div></div>;
+
+  const peak = Math.max(0, ...series.flatMap((point) => [point.revenue, point.expenses]));
+  const { step, top } = axisScale(peak);
+  const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, index) => index * step);
+
+  const width = 720;
+  const height = 260;
+  const padLeft = 62;
+  const padRight = 14;
+  const padTop = 18;
+  const padBottom = 36;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+  const baseline = padTop + plotHeight;
+  const groupWidth = plotWidth / series.length;
+  const barWidth = Math.min(32, groupWidth * 0.26);
+  const y = (value: number) => baseline - (value / top) * plotHeight;
+  const axisMoney = (value: number) => (value === 0 ? "$0" : `$${Math.round(value).toLocaleString("en-US")}`);
+
+  return <div className="card chart">
+    <div className="chart-legend">
+      <span className="legend-item"><i className="legend-swatch revenue" />Revenue</span>
+      <span className="legend-item"><i className="legend-swatch expenses" />Expenses</span>
+    </div>
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly revenue compared with monthly expenses">
+      {ticks.map((tick) => <g key={`tick-${tick}`}>
+        <line x1={padLeft} x2={width - padRight} y1={y(tick)} y2={y(tick)} className="chart-grid" />
+        <text x={padLeft - 10} y={y(tick) + 4} textAnchor="end" className="chart-axis">{axisMoney(tick)}</text>
+      </g>)}
+      {series.map((point, index) => {
+        const center = padLeft + groupWidth * index + groupWidth / 2;
+        return <g key={point.month}>
+          <rect className="chart-bar revenue" x={center - barWidth - 3} y={y(point.revenue)} width={barWidth} height={Math.max(0, baseline - y(point.revenue))} rx="3">
+            <title>{`${monthLong(point.month)} — revenue ${money(point.revenue)}`}</title>
+          </rect>
+          <rect className="chart-bar expenses" x={center + 3} y={y(point.expenses)} width={barWidth} height={Math.max(0, baseline - y(point.expenses))} rx="3">
+            <title>{`${monthLong(point.month)} — expenses ${money(point.expenses)}`}</title>
+          </rect>
+          <text x={center} y={height - 13} textAnchor="middle" className="chart-axis">{monthLabel(point.month)}</text>
+        </g>;
+      })}
+    </svg>
+  </div>;
+}
+
 function FinancesView({ data, go, onEditExpense }: { data: AppData; go: (view: View) => void; onEditExpense: (expense: Expense) => void }) {
   const revenue = data.jobs.filter((job) => (job.status || "").toLowerCase() === "paid").reduce((sum, job) => sum + numeric(job.amount_to_charge), 0);
   const expenses = data.expenses.reduce((sum, expense) => sum + numeric(expense.amount), 0);
   const netProfit = revenue - expenses;
   const generated = new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric" }).format(new Date());
-  return <><div className="page-heading"><div><h1>Balance Sheet</h1><p>All Time · Generated {generated}</p></div><button className="button primary" onClick={() => go("new-expense")}><Plus size={15} /> Add Expense</button></div><div className="grid-2"><div className="card"><div className="eyebrow">Total Revenue</div><div className="metric-value">{money(revenue)}</div><div className="stat-line"><span>Total Expenses</span><strong>{money(expenses)}</strong></div><div className="stat-line net"><span>Net Profit</span><strong>{money(netProfit)}</strong></div></div><div className="card"><h3>Quick actions</h3><button className="button" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}><span><FileDown size={15} /> Export financials</span><ArrowUpRight size={14} /></button><button className="button" style={{ width: "100%", justifyContent: "space-between" }}><span><Tag size={15} /> Manage categories</span><ArrowUpRight size={14} /></button></div></div><section className="section"><SectionHeading title="Recent Expenses" /><div className="stack">{data.expenses.length === 0 ? <div className="empty">No expenses recorded.</div> : data.expenses.map((expense) => <div className="expense-row" key={expense.id}><div className="metric-icon rose"><CircleDollarSign size={15} /></div><div className="expense-row-main"><div className="row-title">{expense.note || "Expense"}</div><div className="row-meta">{shortDate(expense.date)} · {expense.category || "Other"}</div></div><strong>{money(expense.amount)}</strong><button className="button small" aria-label={`Edit ${expense.note || "expense"}`} onClick={() => onEditExpense(expense)}><Pencil size={13} /> Edit</button></div>)}</div></section></>;
+  return <><div className="page-heading"><div><h1>Balance Sheet</h1><p>All Time · Generated {generated}</p></div><button className="button primary" onClick={() => go("new-expense")}><Plus size={15} /> Add Expense</button></div><div className="grid-2"><div className="card"><div className="eyebrow">Total Revenue</div><div className="metric-value">{money(revenue)}</div><div className="stat-line"><span>Total Expenses</span><strong>{money(expenses)}</strong></div><div className="stat-line net"><span>Net Profit</span><strong>{money(netProfit)}</strong></div></div><div className="card"><h3>Quick actions</h3><button className="button" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }}><span><FileDown size={15} /> Export financials</span><ArrowUpRight size={14} /></button><button className="button" style={{ width: "100%", justifyContent: "space-between" }}><span><Tag size={15} /> Manage categories</span><ArrowUpRight size={14} /></button></div></div><section className="section"><SectionHeading title="Revenue vs Expenses" /><FinanceChart data={data} /></section><section className="section"><SectionHeading title="Recent Expenses" /><div className="stack">{data.expenses.length === 0 ? <div className="empty">No expenses recorded.</div> : data.expenses.map((expense) => <div className="expense-row" key={expense.id}><div className="metric-icon rose"><CircleDollarSign size={15} /></div><div className="expense-row-main"><div className="row-title">{expense.note || "Expense"}</div><div className="row-meta">{shortDate(expense.date)} · {expense.category || "Other"}</div></div><strong>{money(expense.amount)}</strong><button className="button small" aria-label={`Edit ${expense.note || "expense"}`} onClick={() => onEditExpense(expense)}><Pencil size={13} /> Edit</button></div>)}</div></section></>;
 }
 
 function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry[]; customers: Customer[]; go: (view: View) => void; onEdit: (entry: WaitingEntry) => void }) {

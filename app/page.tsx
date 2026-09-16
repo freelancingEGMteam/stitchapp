@@ -35,7 +35,7 @@ import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
 import { supabase } from "@/lib/supabase";
 
-type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment";
+type View = "dashboard" | "jobs" | "customers" | "leads" | "appointments" | "finances" | "waiting" | "team" | "lifecycle" | "new-job" | "new-expense" | "new-waiting" | "new-appointment" | "new-lead";
 type WaitingEntry = { id: string; name: string; contact?: string; request: string; notes?: string; addedDate: string };
 
 type NavItem = { key: View; label: string; icon: LucideIcon };
@@ -279,10 +279,10 @@ function CustomersView({ data, go, onSelect, onEdit }: { data: AppData; go: (vie
   return <><div className="page-heading"><div><h1>Customers</h1><p>Your customer book, ready for the next fitting.</p></div><button className="button primary" onClick={() => go("new-job")}><Plus size={15} /> New</button></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search customers..." /></div><div className="stack">{customers.length === 0 ? <div className="empty">No customers match your search.</div> : customers.map((customer) => <div key={customer.id} className="customer-row clickable" role="button" tabIndex={0} onClick={() => onSelect(customer)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(customer); } }}><div className="avatar">{initials(customer.customer_name)}</div><div className="customer-row-main"><div className="row-title">{customer.customer_name}</div><div className="row-meta">{customer.phone_number || "No phone"}{customer.address ? ` · ${customer.address}` : ""}</div></div><div className="row-actions"><span className="badge info">{customer.source || "Customer"}</span><button className="button small row-edit-button" aria-label={`Edit ${customer.customer_name}`} onClick={(event) => { event.stopPropagation(); onEdit(customer); }}><Pencil size={13} /> Edit</button><ChevronRight size={16} className="muted" /></div></div>)}</div></>;
 }
 
-function LeadsView({ data, onSelect, onEdit }: { data: AppData; onSelect: (lead: Lead) => void; onEdit: (lead: Lead) => void }) {
+function LeadsView({ data, go, onSelect, onEdit }: { data: AppData; go: (view: View) => void; onSelect: (lead: Lead) => void; onEdit: (lead: Lead) => void }) {
   const [query, setQuery] = useState("");
   const leads = data.leads.filter((lead) => `${lead.name} ${lead.interested_in || ""} ${lead.source || ""}`.toLowerCase().includes(query.toLowerCase()));
-  return <><div className="page-heading"><div><h1>Leads</h1><p>Keep warm inquiries moving toward their first fitting.</p></div><button className="button primary"><Plus size={15} /> New Lead</button></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search leads..." /></div><div className="stack">{leads.length === 0 ? <div className="empty">No leads match your search.</div> : leads.map((lead) => <div key={lead.id} className="lead-row clickable" role="button" tabIndex={0} onClick={() => onSelect(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(lead); } }}><div className="avatar blue">{initials(lead.name)}</div><div className="lead-row-main"><div className="row-title">{lead.name}</div><div className="row-description">{lead.interested_in || "No project details yet."}</div><div className="row-meta">{lead.phone_number || lead.email || "No contact details"}</div></div><div className="row-actions"><span className={`badge ${statusTone(lead.status)}`}>{lead.status || "New"}</span><button className="button small row-edit-button" aria-label={`Edit ${lead.name}`} onClick={(event) => { event.stopPropagation(); onEdit(lead); }}><Pencil size={13} /> Edit</button></div></div>)}</div></>;
+  return <><div className="page-heading"><div><h1>Leads</h1><p>Keep warm inquiries moving toward their first fitting.</p></div><button className="button primary" onClick={() => go("new-lead")}><Plus size={15} /> New Lead</button></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search leads..." /></div><div className="stack">{leads.length === 0 ? <div className="empty">No leads match your search.</div> : leads.map((lead) => <div key={lead.id} className="lead-row clickable" role="button" tabIndex={0} onClick={() => onSelect(lead)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(lead); } }}><div className="avatar blue">{initials(lead.name)}</div><div className="lead-row-main"><div className="row-title">{lead.name}</div><div className="row-description">{lead.interested_in || "No project details yet."}</div><div className="row-meta">{lead.phone_number || lead.email || "No contact details"}</div></div><div className="row-actions"><span className={`badge ${statusTone(lead.status)}`}>{lead.status || "New"}</span><button className="button small row-edit-button" aria-label={`Edit ${lead.name}`} onClick={(event) => { event.stopPropagation(); onEdit(lead); }}><Pencil size={13} /> Edit</button></div></div>)}</div></>;
 }
 
 function DetailBack({ label, onBack }: { label: string; onBack: () => void }) {
@@ -513,6 +513,32 @@ function NewExpenseView({ onCreate, go }: { onCreate: (expense: Expense) => void
   return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}><option>Supplies</option><option>Fabric</option><option>Equipment</option><option>Rent &amp; utilities</option><option>Marketing</option><option>Other</option></select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Expense</button></div></form></>;
 }
 
+function NewLeadView({ data, onCreate, go }: { data: AppData; onCreate: (lead: Lead) => void; go: (view: View) => void }) {
+  const [name, setName] = useState("");
+  const [status, setStatus] = useState("New");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [location, setLocation] = useState("");
+  const [source, setSource] = useState("Phone");
+  const [interestedIn, setInterestedIn] = useState("");
+  const [notes, setNotes] = useState("");
+  const knownCustomer = data.customers.find((customer) => customer.customer_name === name);
+  const updateName = (value: string) => {
+    setName(value);
+    const customer = data.customers.find((item) => item.customer_name === value);
+    if (!customer) return;
+    if (!phone) setPhone(customer.phone_number || "");
+    if (!email) setEmail(customer.email || "");
+    if (!location) setLocation(customer.address || "");
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    onCreate({ id: `local-lead-${Date.now()}`, name, status, phone_number: phone, email, location, source, interested_in: interestedIn, notes });
+    go("leads");
+  };
+  return <><div className="page-heading"><div><h1>New Lead</h1><p>Capture an enquiry before it goes cold.</p></div><button className="button" onClick={() => go("leads")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field"><label htmlFor="lead-name">Name</label><input id="lead-name" list="lead-customer-names" value={name} onChange={(event) => updateName(event.target.value)} placeholder="Who is enquiring?" required /><datalist id="lead-customer-names">{data.customers.map((customer) => <option key={customer.id} value={customer.customer_name}>{customer.phone_number || customer.email || ""}</option>)}</datalist>{knownCustomer && <div className="autocomplete-meta">Existing customer · {knownCustomer.phone_number || "No phone"}{knownCustomer.email ? ` · ${knownCustomer.email}` : ""}</div>}</div><div className="field"><label htmlFor="lead-status">Status</label><select id="lead-status" value={status} onChange={(event) => setStatus(event.target.value)}><option>New</option><option>Contacted</option><option>Qualified</option><option>Converted</option><option>Lost</option></select></div><div className="field"><label htmlFor="lead-phone">Phone</label><input id="lead-phone" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 123-4567" /></div><div className="field"><label htmlFor="lead-email">Email</label><input id="lead-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" /></div><div className="field"><label htmlFor="lead-location">Location</label><input id="lead-location" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Town or area" /></div><div className="field"><label htmlFor="lead-source">Source</label><select id="lead-source" value={source} onChange={(event) => setSource(event.target.value)}><option>Phone</option><option>Facebook</option><option>Referral</option><option>Walk-in</option><option>Other</option></select></div><div className="field full"><label htmlFor="lead-interest">Interested in</label><textarea id="lead-interest" value={interestedIn} onChange={(event) => setInterestedIn(event.target.value)} placeholder="Describe what they are looking for..." /></div><div className="field full"><label htmlFor="lead-notes">Notes</label><textarea id="lead-notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Add any context for the next follow-up..." /></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("leads")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Lead</button></div></form></>;
+}
+
 function NewWaitingView({ customers, onCreate, go }: { customers: Customer[]; onCreate: (entry: WaitingEntry) => void; go: (view: View) => void }) {
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
@@ -586,6 +612,7 @@ export default function Home() {
   const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(expense); };
   const createWaitingEntry = (entry: WaitingEntry) => { setWaitingList((current) => [entry, ...current]); toast("Customer added to the waiting list."); };
   const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(appointment); };
+  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(lead); };
   const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void supabase.from("appointments").update({ status: "Completed" }).eq("id", appointment.id); };
   const updateCustomer = (updated: Customer) => {
     const previous = data.customers.find((item) => item.id === updated.id);
@@ -646,7 +673,7 @@ export default function Home() {
     ].slice(0, 8);
   }, [data, globalQuery]);
 
-  const title = navItems.find((item) => item.key === view)?.label || (view === "new-job" ? "Add Job" : view === "new-expense" ? "Add Expense" : view === "new-waiting" ? "Add to waiting list" : view === "new-appointment" ? "New Appointment" : "Dashboard");
+  const title = navItems.find((item) => item.key === view)?.label || (view === "new-job" ? "Add Job" : view === "new-expense" ? "Add Expense" : view === "new-waiting" ? "Add to waiting list" : view === "new-appointment" ? "New Appointment" : view === "new-lead" ? "New Lead" : "Dashboard");
   const selectedCustomer = detail?.type === "customer" ? data.customers.find((item) => item.id === detail.id) : undefined;
   const selectedJob = detail?.type === "job" ? data.jobs.find((item) => item.id === detail.id) : undefined;
   const selectedLead = detail?.type === "lead" ? data.leads.find((item) => item.id === detail.id) : undefined;
@@ -660,7 +687,7 @@ export default function Home() {
       {view === "customers" && selectedCustomer ? <CustomerDetailView customer={selectedCustomer} data={data} onBack={closeDetail} onSelectJob={openJob} onNewJob={openNewJobForCustomer} onAddAppointment={openNewAppointmentForCustomer} onEdit={setEditingCustomer} /> : null}
       {view === "customers" && (!detail || detail.type !== "customer") && <CustomersView data={data} go={go} onSelect={openCustomer} onEdit={setEditingCustomer} />}
       {view === "leads" && selectedLead ? <LeadDetailView lead={selectedLead} onBack={closeDetail} onEdit={setEditingLead} /> : null}
-      {view === "leads" && (!detail || detail.type !== "lead") && <LeadsView data={data} onSelect={openLead} onEdit={setEditingLead} />}
+      {view === "leads" && (!detail || detail.type !== "lead") && <LeadsView data={data} go={go} onSelect={openLead} onEdit={setEditingLead} />}
       {view === "appointments" && <AppointmentsView data={data} go={go} onComplete={completeAppointment} onEdit={setEditingAppointment} />}
       {view === "finances" && <FinancesView data={data} go={go} onEditExpense={setEditingExpense} />}
       {view === "waiting" && <WaitingView entries={waitingList} customers={data.customers} go={go} onEdit={setEditingWaiting} />}
@@ -670,6 +697,7 @@ export default function Home() {
       {view === "new-expense" && <NewExpenseView onCreate={createExpense} go={go} />}
       {view === "new-waiting" && <NewWaitingView customers={data.customers} onCreate={createWaitingEntry} go={go} />}
       {view === "new-appointment" && <NewAppointmentView data={data} onCreate={createAppointment} go={go} initialCustomer={newAppointmentCustomer} />}
+      {view === "new-lead" && <NewLeadView data={data} onCreate={createLead} go={go} />}
     </div></main>
     {editingCustomer && <EditCustomerModal customer={editingCustomer} onClose={() => setEditingCustomer(null)} onSave={updateCustomer} />}
     {editingJob && <EditJobModal job={editingJob} customers={data.customers} onClose={() => setEditingJob(null)} onSave={updateJob} />}

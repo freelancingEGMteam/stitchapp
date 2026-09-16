@@ -1,0 +1,14 @@
+import type { Metadata } from "next";
+import { Inter } from "next/font/google";
+import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
+
+export const metadata: Metadata = {
+  title: "Stitch & Thread Studio",
+  description: "A self-hosted studio manager for alterations, customers, jobs, leads, and appointments.",
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return <html lang="en" className={inter.variable}><body>{children}</body></html>;
+}

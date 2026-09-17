@@ -63,27 +63,19 @@ const steps = ["New inquiry", "Measurements", "Quote", "In progress", "Ready", "
 const cloneData = (): AppData => JSON.parse(JSON.stringify(seedData)) as AppData;
 
 /**
- * Fire-and-forget writes hide their own failures: if the save is rejected the
- * studio sees a normal toast and assumes the record is safe. Surface it
- * instead, and drop the badge to "device only" so it is visible.
+ * Columns Postgres types strictly, which the app may hold as an empty string.
+ *
+ * This is only a FAST PATH, not the guarantee. saveRows retries anyway, so a
+ * column missing from this list costs one wasted request rather than a lost
+ * record. That is deliberate: the list used to be load-bearing, which meant a
+ * new numeric column would silently reintroduce the bug.
  */
-const reportWriteFailure = (label: string, result: { error?: unknown } | undefined) => {
-  if (result && result.error) console.error(`[stitchflow] saving ${label} failed:`, result.error);
-};
-
-/** Columns Postgres types strictly, which the app may hold as an empty string. */
 const POSTGRES_TYPED_COLUMNS = [
   "start_date", "delivery_date", "date",
   "amount_to_charge", "deposit_paid", "balance_due", "tip_received", "time_spent_minutes", "amount",
 ];
 
-/**
- * The app stores an unset date or amount as "", but the Postgres date and
- * numeric columns reject that ("invalid input syntax for type date: \"\""),
- * and one bad value fails the entire batch. Normalise on the way out so a
- * blank field cannot lose a whole save.
- */
-const forPostgres = (row: object): Record<string, unknown> => {
+const nullTypedBlanks = (row: object): Record<string, unknown> => {
   const out: Record<string, unknown> = { ...row };
   for (const key of POSTGRES_TYPED_COLUMNS) {
     if (out[key] === "") out[key] = null;
@@ -91,38 +83,65 @@ const forPostgres = (row: object): Record<string, unknown> => {
   return out;
 };
 
+/** The blunt version: every empty string becomes null, whatever the column. */
+const nullEveryBlank = (row: Record<string, unknown>): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) out[key] = value === "" ? null : value;
+  return out;
+};
+
 /** Just enough of the Supabase client to save rows, so this needs no import. */
+type WriteResult = { error: unknown };
+type Row = Record<string, unknown>;
 type TableWriter = {
-  from: (table: string) => { upsert: (rows: Record<string, unknown> | Record<string, unknown>[]) => PromiseLike<{ error: unknown }> };
+  from: (table: string) => {
+    insert: (rows: Row | Row[]) => PromiseLike<WriteResult>;
+    upsert: (rows: Row | Row[]) => PromiseLike<WriteResult>;
+    update: (row: Row) => { eq: (column: string, value: unknown) => PromiseLike<WriteResult> };
+  };
 };
 
 /**
- * Saves a batch, and if the batch is rejected saves the rows one at a time
- * instead.
+ * Saves rows, retrying in progressively more forgiving ways.
  *
- * An upsert is atomic, so a single bad row rejects the entire batch: that is
- * how one empty delivery_date dropped all 57 jobs at once. Falling back to
- * individual writes keeps every row that is valid and names the ones that are
- * not, so a bad record costs one record rather than all of them.
+ *   1. as given, which is right almost always
+ *   2. with every empty string nulled. Which columns Postgres types strictly
+ *      is not knowable from the client, so this is driven by the rejection
+ *      rather than by a list that has to stay correct forever.
+ *   3. one row at a time, because an insert is atomic: without this, a single
+ *      bad record rejects the whole batch. That is how one empty delivery_date
+ *      dropped all 57 jobs at once.
  */
-const upsertBatch = async (client: TableWriter, table: string, rows: Record<string, unknown>[]): Promise<{ saved: number; failed: number }> => {
+const saveRows = async (client: TableWriter, table: string, rows: Row[], mode: "insert" | "upsert", label: string): Promise<{ saved: number; failed: number }> => {
   if (rows.length === 0) return { saved: 0, failed: 0 };
-  const whole = await client.from(table).upsert(rows);
-  if (!whole.error) return { saved: rows.length, failed: 0 };
+  const write = (payload: Row | Row[]) => (mode === "upsert" ? client.from(table).upsert(payload) : client.from(table).insert(payload));
+
+  if (!(await write(rows)).error) return { saved: rows.length, failed: 0 };
+
+  const nulled = rows.map(nullEveryBlank);
+  if (!(await write(nulled)).error) return { saved: rows.length, failed: 0 };
 
   let saved = 0;
   let failed = 0;
-  for (const row of rows) {
-    const one = await client.from(table).upsert(row);
+  for (const row of nulled) {
+    const one = await write(row);
     if (one.error) {
       failed += 1;
-      console.error(`[stitchflow] could not save a row to ${table}:`, one.error, row);
+      console.error(`[stitchflow] could not save a ${label}:`, one.error, row);
     } else {
       saved += 1;
     }
   }
   console.log(`[stitchflow] ${table}: batch rejected, saved ${saved} of ${rows.length} individually`);
   return { saved, failed };
+};
+
+/** An update carries a whole record too, so it gets the same empty-string retry. */
+const saveUpdate = async (client: TableWriter, table: string, row: Row, matchColumn: string, matchValue: unknown, label: string) => {
+  const run = (payload: Row) => client.from(table).update(payload).eq(matchColumn, matchValue);
+  if (!(await run(row)).error) return;
+  const retry = await run(nullEveryBlank(row));
+  if (retry.error) console.error(`[stitchflow] saving ${label} failed:`, retry.error);
 };
 
 const loadStoredData = (): AppData => {
@@ -1144,14 +1163,14 @@ export default function Home() {
       const localTotal = Object.values(local).reduce((sum, rows) => sum + rows.length, 0);
       if (localTotal === 0) { setCloudState("synced"); return; }
       setCloudState("migrating");
-      const stamp = (rows: Record<string, unknown>[]) => rows.map((row) => forPostgres({ created_date: new Date().toISOString(), ...row }));
+      const stamp = (rows: Record<string, unknown>[]) => rows.map((row) => nullTypedBlanks({ created_date: new Date().toISOString(), ...row }));
       const results = await Promise.all([
-        upsertBatch(client, "customers", stamp(local.customers as unknown as Record<string, unknown>[])),
-        upsertBatch(client, "jobs", stamp(local.jobs as unknown as Record<string, unknown>[])),
-        upsertBatch(client, "leads", stamp(local.leads as unknown as Record<string, unknown>[])),
-        upsertBatch(client, "expenses", stamp(local.expenses as unknown as Record<string, unknown>[])),
-        upsertBatch(client, "appointments", stamp(local.appointments as unknown as Record<string, unknown>[])),
-        upsertBatch(client, "customer_lifecycle", stamp(local.lifecycle as unknown as Record<string, unknown>[])),
+        saveRows(client, "customers", stamp(local.customers as unknown as Row[]), "upsert", "customer"),
+        saveRows(client, "jobs", stamp(local.jobs as unknown as Row[]), "upsert", "job"),
+        saveRows(client, "leads", stamp(local.leads as unknown as Row[]), "upsert", "lead"),
+        saveRows(client, "expenses", stamp(local.expenses as unknown as Row[]), "upsert", "expense"),
+        saveRows(client, "appointments", stamp(local.appointments as unknown as Row[]), "upsert", "appointment"),
+        saveRows(client, "customer_lifecycle", stamp(local.lifecycle as unknown as Row[]), "upsert", "lifecycle record"),
       ]);
       if (cancelled) return;
       const failed = results.reduce((sum, result) => sum + result.failed, 0);
@@ -1178,19 +1197,20 @@ export default function Home() {
   const openNewAppointmentForCustomer = (customer: Customer) => { setNewAppointmentCustomer(customer); setDetail(null); setView("new-appointment"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const closeDetail = () => { setDetail(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const toast = (message: string) => { setToastText(message); window.setTimeout(() => setToastText(""), 2800); };
-  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); if (supabase) void supabase.from("jobs").insert(forPostgres(job)).then((result) => reportWriteFailure("job", result)); };
-  const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(forPostgres(expense)).then((result) => reportWriteFailure("expense", result)); };
+  const saveNew = (table: string, row: Row, label: string) => { if (supabase) void saveRows(supabase, table, [nullTypedBlanks(row)], "insert", label); };
+  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); saveNew("jobs", job, "job"); };
+  const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); saveNew("expenses", expense, "expense"); };
   const createWaitingEntry = (entry: WaitingEntry) => { setWaitingList((current) => [entry, ...current]); toast("Customer added to the waiting list."); };
-  const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(forPostgres(appointment)).then((result) => reportWriteFailure("appointment", result)); };
-  const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); if (supabase) void supabase.from("customers").insert(forPostgres(customer)).then((result) => reportWriteFailure("customer", result)); };
-  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(forPostgres(lead)).then((result) => reportWriteFailure("lead", result)); };
-  const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void supabase.from("appointments").update({ status: "Completed" }).eq("id", appointment.id).then((result) => reportWriteFailure("appointment", result)); };
+  const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); saveNew("appointments", appointment, "appointment"); };
+  const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); saveNew("customers", customer, "customer"); };
+  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); saveNew("leads", lead, "lead"); };
+  const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void saveUpdate(supabase, "appointments", { status: "Completed" }, "id", appointment.id, "appointment"); };
   const updateCustomer = (updated: Customer) => {
     const previous = data.customers.find((item) => item.id === updated.id);
     setData((current) => ({ ...current, customers: current.customers.map((item) => item.id === updated.id ? updated : item), jobs: current.jobs.map((job) => job.customer_id === updated.id || job.customer_name === previous?.customer_name ? { ...job, customer_name: updated.customer_name, phone_number: updated.phone_number, email: updated.email } : job) }));
     if (supabase) {
-      void supabase.from("customers").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("customer", result));
-      void supabase.from("jobs").update({ customer_name: updated.customer_name, phone_number: updated.phone_number, updated_date: new Date().toISOString() }).eq("customer_id", updated.id).then((result) => reportWriteFailure("job", result));
+      void saveUpdate(supabase, "customers", { ...updated, updated_date: new Date().toISOString() }, "id", updated.id, "customer");
+      void saveUpdate(supabase, "jobs", { customer_name: updated.customer_name, phone_number: updated.phone_number, updated_date: new Date().toISOString() }, "customer_id", updated.id, "job");
     }
     setEditingCustomer(null);
     toast("Customer updated.");
@@ -1199,26 +1219,26 @@ export default function Home() {
     setData((current) => ({ ...current, jobs: current.jobs.map((item) => item.id === updated.id ? updated : item) }));
     if (supabase) {
       const { email: _email, ...jobFields } = updated;
-      void supabase.from("jobs").update(forPostgres({ ...jobFields, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("job", result));
+      void saveUpdate(supabase, "jobs", { ...jobFields, updated_date: new Date().toISOString() }, "id", updated.id, "job");
     }
     setEditingJob(null);
     toast("Job updated.");
   };
   const updateLead = (updated: Lead) => {
     setData((current) => ({ ...current, leads: current.leads.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("leads").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("lead", result));
+    if (supabase) void saveUpdate(supabase, "leads", { ...updated, updated_date: new Date().toISOString() }, "id", updated.id, "lead");
     setEditingLead(null);
     toast("Lead updated.");
   };
   const updateAppointment = (updated: Appointment) => {
     setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("appointments").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("appointment", result));
+    if (supabase) void saveUpdate(supabase, "appointments", { ...updated, updated_date: new Date().toISOString() }, "id", updated.id, "appointment");
     setEditingAppointment(null);
     toast("Appointment updated.");
   };
   const updateExpense = (updated: Expense) => {
     setData((current) => ({ ...current, expenses: current.expenses.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("expenses").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("expense", result));
+    if (supabase) void saveUpdate(supabase, "expenses", { ...updated, updated_date: new Date().toISOString() }, "id", updated.id, "expense");
     setEditingExpense(null);
     toast("Expense updated.");
   };
@@ -1229,7 +1249,7 @@ export default function Home() {
   };
   const updateLifecycle = (updated: Lifecycle) => {
     setData((current) => ({ ...current, lifecycle: current.lifecycle.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("customer_lifecycle").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("lifecycle", result));
+    if (supabase) void saveUpdate(supabase, "customer_lifecycle", { ...updated, updated_date: new Date().toISOString() }, "id", updated.id, "lifecycle record");
     setEditingLifecycle(null);
     toast("Lifecycle updated.");
   };

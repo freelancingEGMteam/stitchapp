@@ -91,6 +91,40 @@ const forPostgres = (row: object): Record<string, unknown> => {
   return out;
 };
 
+/** Just enough of the Supabase client to save rows, so this needs no import. */
+type TableWriter = {
+  from: (table: string) => { upsert: (rows: Record<string, unknown> | Record<string, unknown>[]) => PromiseLike<{ error: unknown }> };
+};
+
+/**
+ * Saves a batch, and if the batch is rejected saves the rows one at a time
+ * instead.
+ *
+ * An upsert is atomic, so a single bad row rejects the entire batch: that is
+ * how one empty delivery_date dropped all 57 jobs at once. Falling back to
+ * individual writes keeps every row that is valid and names the ones that are
+ * not, so a bad record costs one record rather than all of them.
+ */
+const upsertBatch = async (client: TableWriter, table: string, rows: Record<string, unknown>[]): Promise<{ saved: number; failed: number }> => {
+  if (rows.length === 0) return { saved: 0, failed: 0 };
+  const whole = await client.from(table).upsert(rows);
+  if (!whole.error) return { saved: rows.length, failed: 0 };
+
+  let saved = 0;
+  let failed = 0;
+  for (const row of rows) {
+    const one = await client.from(table).upsert(row);
+    if (one.error) {
+      failed += 1;
+      console.error(`[stitchflow] could not save a row to ${table}:`, one.error, row);
+    } else {
+      saved += 1;
+    }
+  }
+  console.log(`[stitchflow] ${table}: batch rejected, saved ${saved} of ${rows.length} individually`);
+  return { saved, failed };
+};
+
 const loadStoredData = (): AppData => {
   if (typeof window === "undefined") return cloneData();
   try {
@@ -1111,17 +1145,17 @@ export default function Home() {
       if (localTotal === 0) { setCloudState("synced"); return; }
       setCloudState("migrating");
       const stamp = (rows: Record<string, unknown>[]) => rows.map((row) => forPostgres({ created_date: new Date().toISOString(), ...row }));
-      const pushes = [
-        client.from("customers").upsert(stamp(local.customers as unknown as Record<string, unknown>[])),
-        client.from("jobs").upsert(stamp(local.jobs as unknown as Record<string, unknown>[])),
-        client.from("leads").upsert(stamp(local.leads as unknown as Record<string, unknown>[])),
-        client.from("expenses").upsert(stamp(local.expenses as unknown as Record<string, unknown>[])),
-        client.from("appointments").upsert(stamp(local.appointments as unknown as Record<string, unknown>[])),
-        client.from("customer_lifecycle").upsert(stamp(local.lifecycle as unknown as Record<string, unknown>[])),
-      ];
-      const results = await Promise.all(pushes);
+      const results = await Promise.all([
+        upsertBatch(client, "customers", stamp(local.customers as unknown as Record<string, unknown>[])),
+        upsertBatch(client, "jobs", stamp(local.jobs as unknown as Record<string, unknown>[])),
+        upsertBatch(client, "leads", stamp(local.leads as unknown as Record<string, unknown>[])),
+        upsertBatch(client, "expenses", stamp(local.expenses as unknown as Record<string, unknown>[])),
+        upsertBatch(client, "appointments", stamp(local.appointments as unknown as Record<string, unknown>[])),
+        upsertBatch(client, "customer_lifecycle", stamp(local.lifecycle as unknown as Record<string, unknown>[])),
+      ]);
       if (cancelled) return;
-      setCloudState(results.some((result) => result.error) ? "offline" : "synced");
+      const failed = results.reduce((sum, result) => sum + result.failed, 0);
+      setCloudState(failed > 0 ? "offline" : "synced");
     })();
     return () => { cancelled = true; };
   }, [signedInUserId]);

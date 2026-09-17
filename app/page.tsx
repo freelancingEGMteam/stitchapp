@@ -1144,19 +1144,19 @@ export default function Home() {
   const openNewAppointmentForCustomer = (customer: Customer) => { setNewAppointmentCustomer(customer); setDetail(null); setView("new-appointment"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const closeDetail = () => { setDetail(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const toast = (message: string) => { setToastText(message); window.setTimeout(() => setToastText(""), 2800); };
-  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); if (supabase) void supabase.from("jobs").insert(forPostgres(job)); };
-  const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(forPostgres(expense)); };
+  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); if (supabase) void supabase.from("jobs").insert(forPostgres(job)).then((result) => reportWriteFailure("job", result)); };
+  const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(forPostgres(expense)).then((result) => reportWriteFailure("expense", result)); };
   const createWaitingEntry = (entry: WaitingEntry) => { setWaitingList((current) => [entry, ...current]); toast("Customer added to the waiting list."); };
-  const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(forPostgres(appointment)); };
+  const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(forPostgres(appointment)).then((result) => reportWriteFailure("appointment", result)); };
   const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); if (supabase) void supabase.from("customers").insert(forPostgres(customer)).then((result) => reportWriteFailure("customer", result)); };
-  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(forPostgres(lead)); };
-  const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void supabase.from("appointments").update({ status: "Completed" }).eq("id", appointment.id); };
+  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(forPostgres(lead)).then((result) => reportWriteFailure("lead", result)); };
+  const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void supabase.from("appointments").update({ status: "Completed" }).eq("id", appointment.id).then((result) => reportWriteFailure("appointment", result)); };
   const updateCustomer = (updated: Customer) => {
     const previous = data.customers.find((item) => item.id === updated.id);
     setData((current) => ({ ...current, customers: current.customers.map((item) => item.id === updated.id ? updated : item), jobs: current.jobs.map((job) => job.customer_id === updated.id || job.customer_name === previous?.customer_name ? { ...job, customer_name: updated.customer_name, phone_number: updated.phone_number, email: updated.email } : job) }));
     if (supabase) {
-      void supabase.from("customers").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
-      void supabase.from("jobs").update({ customer_name: updated.customer_name, phone_number: updated.phone_number, updated_date: new Date().toISOString() }).eq("customer_id", updated.id);
+      void supabase.from("customers").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("customer", result));
+      void supabase.from("jobs").update({ customer_name: updated.customer_name, phone_number: updated.phone_number, updated_date: new Date().toISOString() }).eq("customer_id", updated.id).then((result) => reportWriteFailure("job", result));
     }
     setEditingCustomer(null);
     toast("Customer updated.");
@@ -1165,26 +1165,26 @@ export default function Home() {
     setData((current) => ({ ...current, jobs: current.jobs.map((item) => item.id === updated.id ? updated : item) }));
     if (supabase) {
       const { email: _email, ...jobFields } = updated;
-      void supabase.from("jobs").update(forPostgres({ ...jobFields, updated_date: new Date().toISOString() })).eq("id", updated.id);
+      void supabase.from("jobs").update(forPostgres({ ...jobFields, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("job", result));
     }
     setEditingJob(null);
     toast("Job updated.");
   };
   const updateLead = (updated: Lead) => {
     setData((current) => ({ ...current, leads: current.leads.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("leads").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
+    if (supabase) void supabase.from("leads").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("lead", result));
     setEditingLead(null);
     toast("Lead updated.");
   };
   const updateAppointment = (updated: Appointment) => {
     setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("appointments").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
+    if (supabase) void supabase.from("appointments").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("appointment", result));
     setEditingAppointment(null);
     toast("Appointment updated.");
   };
   const updateExpense = (updated: Expense) => {
     setData((current) => ({ ...current, expenses: current.expenses.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("expenses").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
+    if (supabase) void supabase.from("expenses").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("expense", result));
     setEditingExpense(null);
     toast("Expense updated.");
   };
@@ -1195,7 +1195,7 @@ export default function Home() {
   };
   const updateLifecycle = (updated: Lifecycle) => {
     setData((current) => ({ ...current, lifecycle: current.lifecycle.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("customer_lifecycle").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
+    if (supabase) void supabase.from("customer_lifecycle").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id).then((result) => reportWriteFailure("lifecycle", result));
     setEditingLifecycle(null);
     toast("Lifecycle updated.");
   };

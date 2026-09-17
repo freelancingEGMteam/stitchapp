@@ -21,6 +21,7 @@ alter table studio_members enable row level security;
 -- people by editing this list and re-running this file.
 insert into studio_members (email) values
   ('rachel.valencas@gmail.com'),
+  ('rachelannseamstress@gmail.com'),
   ('matiasvalencas@gmail.com')
   on conflict (email) do nothing;
 

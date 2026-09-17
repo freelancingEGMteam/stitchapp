@@ -9,6 +9,7 @@ export default function SignIn() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const [sentKind, setSentKind] = useState<"link" | "reset">("link");
   const [error, setError] = useState("");
   /**
    * Whether Google is actually switched on in Supabase. Asking up front stops
@@ -77,6 +78,27 @@ export default function SignIn() {
         : `Could not send the sign-in link. ${authError.message}`);
       return;
     }
+    setSentKind("link");
+    setSent(true);
+  };
+
+  const forgotPassword = async () => {
+    if (!supabase) return;
+    const address = email.trim();
+    if (!address) { setError("Type your email address above first, then tap “Forgot password?”."); return; }
+    setError("");
+    setBusy(true);
+    const { error: authError } = await supabase.auth.resetPasswordForEmail(address, {
+      redirectTo: `${window.location.origin}/`,
+    });
+    setBusy(false);
+    if (authError) {
+      setError(authError.message.toLowerCase().includes("rate limit")
+        ? "Too many emails have been sent this hour. Another studio member can reset it for you, or try again later."
+        : `Could not send the reset link. ${authError.message}`);
+      return;
+    }
+    setSentKind("reset");
     setSent(true);
   };
 
@@ -91,7 +113,7 @@ export default function SignIn() {
       {sent ? <div className="auth-sent">
         <Mail size={34} className="auth-sent-icon" />
         <h2>Check your email</h2>
-        <p className="booking-note">We sent a sign-in link to <strong>{email.trim()}</strong>. Open it on this device to finish signing in.</p>
+        <p className="booking-note">We sent {sentKind === "reset" ? "a password reset link" : "a sign-in link"} to <strong>{email.trim()}</strong>. Open it on this device to {sentKind === "reset" ? "choose a new password" : "finish signing in"}.</p>
         <button type="button" className="booking-back" onClick={() => { setSent(false); setPassword(""); }}>← Back to sign-in</button>
       </div> : <>
         {googleReady && <>
@@ -123,6 +145,9 @@ export default function SignIn() {
 
         <button type="button" className="auth-alternate" onClick={withEmail} disabled={busy || !email.trim()}>
           Email me a sign-in link instead
+        </button>
+        <button type="button" className="auth-alternate" onClick={forgotPassword} disabled={busy}>
+          Forgot password?
         </button>
       </>}
 

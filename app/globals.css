@@ -383,6 +383,8 @@ a { color: inherit; text-decoration: none; }
 .auth-alternate { display: block; width: 100%; margin-top: 14px; padding: 8px; border: 0; background: transparent; color: var(--rose-deep); font-size: 13px; font-weight: 600; }
 .auth-alternate:hover:not(:disabled) { text-decoration: underline; }
 .auth-alternate:disabled { opacity: .5; cursor: not-allowed; }
+.auth-account { display: grid; gap: 4px; margin-top: auto; }
+.auth-account .auth-signout { margin-top: 0; }
 @media (max-width: 720px) {
   .booking-request { align-items: flex-start; flex-wrap: wrap; }
   .booking-request-when { flex: 0 0 78px; }

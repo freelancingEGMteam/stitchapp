@@ -652,6 +652,46 @@ function BookingHoursEditor() {
   </form>;
 }
 
+/** Self-service password change. `recovery` is true when arriving from an email reset link. */
+function ChangePasswordModal({ email, recovery, onClose }: { email: string; recovery: boolean; onClose: () => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [done, setDone] = useState(false);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setError("");
+    if (next.length < 8) { setError("Use at least 8 characters."); return; }
+    if (next !== confirm) { setError("The two new passwords do not match."); return; }
+    setBusy(true);
+    // Coming from an email link there is no current password to check.
+    if (!recovery) {
+      const { error: verifyError } = await supabase.auth.signInWithPassword({ email, password: current });
+      if (verifyError) { setBusy(false); setError("That current password is not right."); return; }
+    }
+    const { error: updateError } = await supabase.auth.updateUser({ password: next });
+    setBusy(false);
+    if (updateError) { setError(updateError.message); return; }
+    setDone(true);
+  };
+
+  if (done) return <EditModalShell title="Password changed" ariaLabel="password changed" onClose={onClose} onSubmit={(event) => { event.preventDefault(); onClose(); }} submitLabel="Done">
+    <p className="row-meta">Your new password is active. Use it the next time you sign in.</p>
+  </EditModalShell>;
+
+  return <EditModalShell title={recovery ? "Set a new password" : "Change password"} ariaLabel="change password" onClose={onClose} onSubmit={submit} submitLabel={busy ? "Saving…" : "Save password"}>
+    <p className="row-meta" style={{ marginBottom: 14 }}>{recovery ? "Choose a new password for" : "Changing the password for"} <strong>{email}</strong>.</p>
+    {!recovery && <div className="field"><label htmlFor="pw-current">Current password</label><input id="pw-current" type="password" value={current} onChange={(event) => setCurrent(event.target.value)} autoComplete="current-password" required /></div>}
+    <div className="field"><label htmlFor="pw-new">New password</label><input id="pw-new" type="password" value={next} onChange={(event) => setNext(event.target.value)} placeholder="At least 8 characters" autoComplete="new-password" required /></div>
+    <div className="field"><label htmlFor="pw-confirm">Confirm new password</label><input id="pw-confirm" type="password" value={confirm} onChange={(event) => setConfirm(event.target.value)} autoComplete="new-password" required /></div>
+    {error && <div className="booking-alert error" style={{ marginTop: 12 }}>{error}</div>}
+  </EditModalShell>;
+}
+
 function BookingsView() {
   const [rows, setRows] = useState<BookingRow[] | null>(null);
   const [error, setError] = useState("");
@@ -826,6 +866,8 @@ export default function Home() {
   const [globalQuery, setGlobalQuery] = useState("");
   const [toastText, setToastText] = useState("");
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -843,7 +885,11 @@ export default function Home() {
       setSession(data.session);
       setAuthReady(true);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    const { data: listener } = supabase.auth.onAuthStateChange((event, next) => {
+      setSession(next);
+      // Arriving from a "reset password" email link: ask for a new password.
+      if (event === "PASSWORD_RECOVERY") { setRecoveryMode(true); setPasswordOpen(true); }
+    });
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -958,7 +1004,7 @@ export default function Home() {
   if (supabase && !session) return <SignIn />;
 
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Scissors size={18} /></div><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div></div><button className="search-box" style={{ width: "100%" }} onClick={() => setSearchOpen(true)}><Search size={16} /><span style={{ fontSize: 14, color: "#a49e97" }}>Search...</span></button><nav className="nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav><div className="studio-name">Rachel&apos;s Seamstress Studio</div>{supabase && session && <button className="nav-item auth-signout" onClick={() => void supabase?.auth.signOut()}>Sign out{session.user?.email ? ` · ${session.user.email}` : ""}</button>}</aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Scissors size={18} /></div><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div></div><button className="search-box" style={{ width: "100%" }} onClick={() => setSearchOpen(true)}><Search size={16} /><span style={{ fontSize: 14, color: "#a49e97" }}>Search...</span></button><nav className="nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav><div className="studio-name">Rachel&apos;s Seamstress Studio</div>{supabase && session && <div className="auth-account"><button className="nav-item auth-signout" onClick={() => void supabase?.auth.signOut()}>Sign out{session.user?.email ? ` · ${session.user.email}` : ""}</button><button className="nav-item auth-signout" onClick={() => { setRecoveryMode(false); setPasswordOpen(true); }}>Change password</button></div>}</aside>
     <main className="main-shell"><div className="mobile-topbar"><button className="icon-button" aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((open) => !open)}>{mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}</button><div className="brand-name">Stitch &amp; Thread</div><button className="icon-button" aria-label="Search studio" onClick={() => { setMobileMenuOpen(false); setSearchOpen(true); }}><Search size={18} /></button></div>{mobileMenuOpen && <div className="mobile-menu-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setMobileMenuOpen(false)}><div className="mobile-menu-panel" role="dialog" aria-modal="true" aria-label="Navigation menu"><div className="mobile-menu-heading"><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div><button className="icon-button" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)}><X size={18} /></button></div><nav className="mobile-menu-nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav></div></div>}<div className="content" aria-label={`${title} page`}>
       {view === "dashboard" && <DashboardView data={data} go={go} onSelectJob={openJob} />}
       {view === "jobs" && selectedJob ? <JobDetailView job={selectedJob} data={data} onBack={closeDetail} onSelectJob={openJob} onEdit={setEditingJob} /> : null}
@@ -979,6 +1025,7 @@ export default function Home() {
       {view === "new-appointment" && <NewAppointmentView data={data} onCreate={createAppointment} go={go} initialCustomer={newAppointmentCustomer} />}
       {view === "new-lead" && <NewLeadView data={data} onCreate={createLead} go={go} />}
     </div></main>
+    {passwordOpen && session?.user?.email && <ChangePasswordModal email={session.user.email} recovery={recoveryMode} onClose={() => { setPasswordOpen(false); setRecoveryMode(false); }} />}
     {newCustomerOpen && <NewCustomerModal onClose={() => setNewCustomerOpen(false)} onSave={(customer) => { createCustomer(customer); setNewCustomerOpen(false); }} />}
     {editingCustomer && <EditCustomerModal customer={editingCustomer} onClose={() => setEditingCustomer(null)} onSave={updateCustomer} />}
     {editingJob && <EditJobModal job={editingJob} customers={data.customers} onClose={() => setEditingJob(null)} onSave={updateJob} />}

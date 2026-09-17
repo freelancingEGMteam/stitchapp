@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function SignIn() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
@@ -41,8 +42,27 @@ export default function SignIn() {
     // On success the browser is redirected, so there is nothing to reset.
   };
 
-  const withEmail = async (event: FormEvent) => {
+  /** The primary path: works without any email delivery. */
+  const withPassword = async (event: FormEvent) => {
     event.preventDefault();
+    if (!supabase) return;
+    setError("");
+    setBusy(true);
+    const { error: authError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    setBusy(false);
+    if (authError) {
+      setError(authError.message.toLowerCase().includes("invalid")
+        ? "That email and password don't match. Check them and try again."
+        : `Could not sign in. ${authError.message}`);
+      return;
+    }
+    // onAuthStateChange in the app takes over from here.
+  };
+
+  const withEmail = async () => {
     if (!supabase) return;
     setError("");
     setBusy(true);
@@ -52,7 +72,9 @@ export default function SignIn() {
     });
     setBusy(false);
     if (authError) {
-      setError(`Could not send the sign-in link. ${authError.message}`);
+      setError(authError.message.toLowerCase().includes("rate limit")
+        ? "Too many sign-in emails have been sent this hour. Use your password instead."
+        : `Could not send the sign-in link. ${authError.message}`);
       return;
     }
     setSent(true);
@@ -70,7 +92,7 @@ export default function SignIn() {
         <Mail size={34} className="auth-sent-icon" />
         <h2>Check your email</h2>
         <p className="booking-note">We sent a sign-in link to <strong>{email.trim()}</strong>. Open it on this device to finish signing in.</p>
-        <button type="button" className="booking-back" onClick={() => { setSent(false); setEmail(""); }}>← Use a different email</button>
+        <button type="button" className="booking-back" onClick={() => { setSent(false); setPassword(""); }}>← Back to sign-in</button>
       </div> : <>
         {googleReady && <>
           <button type="button" className="auth-provider" onClick={withGoogle} disabled={busy}>
@@ -85,15 +107,23 @@ export default function SignIn() {
           <div className="auth-divider"><span>or</span></div>
         </>}
 
-        <form onSubmit={withEmail}>
+        <form onSubmit={withPassword}>
           <div className="field">
             <label htmlFor="auth-email">Email</label>
-            <input id="auth-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
+            <input id="auth-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="username" required />
           </div>
-          <button type="submit" className="booking-submit" disabled={busy || !email.trim()}>
-            {busy ? "Sending…" : "Email me a sign-in link"}
+          <div className="field">
+            <label htmlFor="auth-password">Password</label>
+            <input id="auth-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Your studio password" autoComplete="current-password" required />
+          </div>
+          <button type="submit" className="booking-submit" disabled={busy || !email.trim() || !password}>
+            {busy ? "Signing in…" : "Sign in"}
           </button>
         </form>
+
+        <button type="button" className="auth-alternate" onClick={withEmail} disabled={busy || !email.trim()}>
+          Email me a sign-in link instead
+        </button>
       </>}
 
       {error && <div className="booking-alert error" style={{ marginTop: 14 }}>{error}</div>}

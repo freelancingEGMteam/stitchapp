@@ -62,6 +62,26 @@ const steps = ["New inquiry", "Measurements", "Quote", "In progress", "Ready", "
 
 const cloneData = (): AppData => JSON.parse(JSON.stringify(seedData)) as AppData;
 
+/** Columns Postgres types strictly, which the app may hold as an empty string. */
+const POSTGRES_TYPED_COLUMNS = [
+  "start_date", "delivery_date", "date",
+  "amount_to_charge", "deposit_paid", "balance_due", "tip_received", "time_spent_minutes", "amount",
+];
+
+/**
+ * The app stores an unset date or amount as "", but the Postgres date and
+ * numeric columns reject that ("invalid input syntax for type date: \"\""),
+ * and one bad value fails the entire batch. Normalise on the way out so a
+ * blank field cannot lose a whole save.
+ */
+const forPostgres = (row: object): Record<string, unknown> => {
+  const out: Record<string, unknown> = { ...row };
+  for (const key of POSTGRES_TYPED_COLUMNS) {
+    if (out[key] === "") out[key] = null;
+  }
+  return out;
+};
+
 const loadStoredData = (): AppData => {
   if (typeof window === "undefined") return cloneData();
   try {
@@ -70,6 +90,21 @@ const loadStoredData = (): AppData => {
     return { ...cloneData(), ...(JSON.parse(raw) as Partial<AppData>) };
   } catch {
     return cloneData();
+  }
+};
+
+/**
+ * Whether this browser has ever actually saved the workspace. loadStoredData
+ * falls back to the demo seed records, so without this a brand new device
+ * would look like it had data and would push those samples into the studio's
+ * real database.
+ */
+const hasStoredData = (): boolean => {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem("stitchflow-data") !== null;
+  } catch {
+    return false;
   }
 };
 
@@ -569,10 +604,15 @@ function BookingHoursEditor() {
   const [error, setError] = useState("");
   // Which month the date calendar is showing, and which date is being edited.
   const [calMonth, setCalMonth] = useState<number | null>(null);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [dateMode, setDateMode] = useState<"week" | "closed" | "custom">("week");
   const [dateOpen, setDateOpen] = useState("10:00");
   const [dateClose, setDateClose] = useState("14:00");
+  // Days ticked in the regular-week picker, and the hours to give them.
+  const [weekDays, setWeekDays] = useState<number[]>([]);
+  const [weekOpen, setWeekOpen] = useState("09:00");
+  const [weekClose, setWeekClose] = useState("17:00");
+  // Dates ticked in the calendar, so several can be changed at once.
+  const [pickedDates, setPickedDates] = useState<string[]>([]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -614,70 +654,88 @@ function BookingHoursEditor() {
 
   if (!draft) return <div className="card"><div className="booking-muted">Loading hours…</div></div>;
 
-  const toggleDay = (day: number) => setDraft((current) => {
-    if (!current) return current;
-    const next = [...current.dayHours];
-    next[day] = next[day] ? null : { open: "09:00", close: "17:00" };
-    return { ...current, dayHours: next };
-  });
+  const toggleWeekDay = (day: number) => setWeekDays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day].sort((a, b) => a - b));
 
-  const setDayHours = (day: number, patch: { open?: string; close?: string }) => setDraft((current) => {
-    if (!current) return current;
-    const existing = current.dayHours[day];
-    if (!existing) return current;
-    const next = [...current.dayHours];
-    next[day] = { ...existing, ...patch };
-    return { ...current, dayHours: next };
-  });
+  const applyToWeek = () => {
+    if (weekDays.length === 0) return;
+    if (toMinutes(weekClose) <= toMinutes(weekOpen)) { setError("A closing time is before its opening time."); setNote(""); return; }
+    const next = [...draft.dayHours];
+    for (const day of weekDays) next[day] = { open: weekOpen, close: weekClose };
+    setDraft({ ...draft, dayHours: next });
+    setError("");
+  };
+
+  const closeWeekDays = () => {
+    if (weekDays.length === 0) return;
+    const next = [...draft.dayHours];
+    for (const day of weekDays) next[day] = null;
+    setDraft({ ...draft, dayHours: next });
+    setError("");
+  };
 
   const noOpenDays = draft.dayHours.every((hours) => hours === null);
   const badWindow = draft.dayHours.some((hours) => hours !== null && toMinutes(hours.close) <= toMinutes(hours.open));
   const exceptionList = Object.values(draft.exceptions).sort((a, b) => a.date.localeCompare(b.date));
   const dateCells = calMonth === null ? [] : monthGrid(Math.floor(calMonth / 12), calMonth % 12);
 
-  const selectDate = (key: string) => {
-    setSelectedDate(key);
+  /** Ticking dates accumulates, so several can be changed in one go. */
+  const toggleDate = (key: string) => setPickedDates((current) => {
+    if (current.includes(key)) return current.filter((item) => item !== key);
+    // Seed the time boxes from the first date picked, so it is not a guess.
     const existing = draft.exceptions[key];
-    if (!existing) { setDateMode("week"); return; }
-    if (existing.open && existing.close) { setDateMode("custom"); setDateOpen(existing.open); setDateClose(existing.close); return; }
-    setDateMode("closed");
-  };
+    if (current.length === 0 && existing?.open && existing?.close) { setDateOpen(existing.open); setDateClose(existing.close); }
+    return [...current, key].sort();
+  });
 
   const applyDate = () => {
-    if (!selectedDate) return;
+    if (pickedDates.length === 0) return;
     if (dateMode === "custom" && toMinutes(dateClose) <= toMinutes(dateOpen)) {
       setError("That date's closing time is before its opening time."); setNote(""); return;
     }
     const next = { ...draft.exceptions };
-    if (dateMode === "week") delete next[selectedDate];
-    else if (dateMode === "closed") next[selectedDate] = { date: selectedDate, open: null, close: null };
-    else next[selectedDate] = { date: selectedDate, open: dateOpen, close: dateClose };
+    for (const key of pickedDates) {
+      if (dateMode === "week") delete next[key];
+      else if (dateMode === "closed") next[key] = { date: key, open: null, close: null };
+      else next[key] = { date: key, open: dateOpen, close: dateClose };
+    }
     setDraft({ ...draft, exceptions: next });
+    setPickedDates([]);
     setError("");
   };
 
-  const clearDate = (key: string) => {
+  const clearDate = () => {
     const next = { ...draft.exceptions };
-    delete next[key];
+    for (const key of pickedDates) delete next[key];
     setDraft({ ...draft, exceptions: next });
-    setSelectedDate(null);
+    setPickedDates([]);
   };
 
   return <form className="card hours-card" onSubmit={save}>
     <div className="eyebrow">Booking hours</div>
     <p className="row-meta" style={{ marginTop: 8 }}>Set your own hours for each day — tap a day to open or close it. Customers can only pick times inside these windows.</p>
 
-    <div className="hours-week">{dayNames.map((label, day) => {
-      const hours = draft.dayHours[day];
-      return <div className={`hours-day-row ${hours ? "on" : ""}`} key={label}>
-        <button type="button" className={`hours-day ${hours ? "on" : ""}`} aria-pressed={hours !== null} onClick={() => toggleDay(day)}>{label.slice(0, 3)}</button>
-        {hours ? <>
-          <input type="time" aria-label={`${label} opening time`} value={hours.open} onChange={(event) => setDayHours(day, { open: event.target.value })} />
-          <span className="hours-sep">to</span>
-          <input type="time" aria-label={`${label} closing time`} value={hours.close} onChange={(event) => setDayHours(day, { close: event.target.value })} />
-        </> : <span className="hours-closed">Closed</span>}
-      </div>;
-    })}</div>
+    <div className="week-picker">
+      <div className="week-chips">{dayNames.map((label, day) => {
+        const hours = draft.dayHours[day];
+        const picked = weekDays.includes(day);
+        return <button
+          key={label}
+          type="button"
+          className={`week-chip${hours ? " open" : ""}${picked ? " picked" : ""}`}
+          aria-pressed={picked}
+          aria-label={`${label}, ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}`}
+          onClick={() => toggleWeekDay(day)}
+        ><span>{label.slice(0, 3)}</span><small>{hours ? `${formatSlot(hours.open).replace(":00", "")}–${formatSlot(hours.close).replace(":00", "")}` : "Closed"}</small></button>;
+      })}</div>
+      <div className="week-apply">
+        <input type="time" aria-label="Weekly opening time" value={weekOpen} onChange={(event) => setWeekOpen(event.target.value)} />
+        <span className="hours-sep">to</span>
+        <input type="time" aria-label="Weekly closing time" value={weekClose} onChange={(event) => setWeekClose(event.target.value)} />
+        <button type="button" className="button small primary" onClick={applyToWeek} disabled={weekDays.length === 0}>Open {weekDays.length || 0} selected</button>
+        <button type="button" className="button small" onClick={closeWeekDays} disabled={weekDays.length === 0}>Close {weekDays.length || 0}</button>
+      </div>
+      <p className="row-meta">{weekDays.length === 0 ? "Tap the days you want to change, then set their hours once." : `${weekDays.length} day${weekDays.length === 1 ? "" : "s"} selected.`}</p>
+    </div>
 
     <div className="hours-row" style={{ marginTop: 16 }}>
       <div className="field"><label htmlFor="hours-slot">Slot length</label>
@@ -714,8 +772,8 @@ function BookingHoursEditor() {
             type="button"
             disabled={!inMonth}
             aria-label={`${prettyDayLong(key)} — ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}`}
-            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${key === selectedDate ? " selected" : ""}${inMonth ? "" : " outside"}`}
-            onClick={() => selectDate(key)}
+            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${pickedDates.includes(key) ? " picked" : ""}${inMonth ? "" : " outside"}`}
+            onClick={() => toggleDate(key)}
           >{parseDateKey(key).getDate()}</button>;
         })}</div>
         <div className="date-legend">
@@ -726,10 +784,10 @@ function BookingHoursEditor() {
         </div>
       </div>
 
-      {selectedDate && <div className="date-editor">
+      {pickedDates.length > 0 && <div className="date-editor">
         <div className="date-editor-head">
-          <strong>{prettyDayLong(selectedDate)}</strong>
-          <button type="button" className="icon-button" aria-label="Close date editor" onClick={() => setSelectedDate(null)}><X size={16} /></button>
+          <strong>{pickedDates.length === 1 ? prettyDayLong(pickedDates[0]) : `${pickedDates.length} dates picked`}</strong>
+          <button type="button" className="icon-button" aria-label="Clear date selection" onClick={() => setPickedDates([])}><X size={16} /></button>
         </div>
         <label className="date-choice"><input type="radio" name="date-mode" checked={dateMode === "week"} onChange={() => setDateMode("week")} /><span>Use my weekly hours</span></label>
         <label className="date-choice"><input type="radio" name="date-mode" checked={dateMode === "closed"} onChange={() => setDateMode("closed")} /><span>Closed all day</span></label>
@@ -740,8 +798,8 @@ function BookingHoursEditor() {
           <input type="time" aria-label="Date closing time" value={dateClose} onChange={(event) => setDateClose(event.target.value)} />
         </div>}
         <div className="date-editor-actions">
-          <button type="button" className="button small primary" onClick={applyDate}>Apply to this date</button>
-          {selectedDate in draft.exceptions && <button type="button" className="button small" onClick={() => clearDate(selectedDate)}>Clear override</button>}
+          <button type="button" className="button small primary" onClick={applyDate}>Apply to {pickedDates.length} {pickedDates.length === 1 ? "date" : "dates"}</button>
+          {pickedDates.some((key) => key in draft.exceptions) && <button type="button" className="button small" onClick={clearDate}>Clear override</button>}
         </div>
       </div>}
 
@@ -975,6 +1033,8 @@ export default function Home() {
   const [globalQuery, setGlobalQuery] = useState("");
   const [toastText, setToastText] = useState("");
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  /** Where the studio's records are actually being kept right now. */
+  const [cloudState, setCloudState] = useState<"checking" | "synced" | "migrating" | "offline">("checking");
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -1002,23 +1062,60 @@ export default function Home() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // The signed-in user's id, used to (re)load records once there is a session.
+  const signedInUserId = session?.user?.id ?? null;
+
   useEffect(() => {
-    if (!supabase) return;
+    // Without a session this would run as anon and always be refused.
+    if (!supabase || !signedInUserId) return;
     let cancelled = false;
-    Promise.all([
-      supabase.from("customers").select("*").order("customer_name"),
-      supabase.from("jobs").select("*").order("delivery_date", { ascending: true }),
-      supabase.from("leads").select("*").order("created_date", { ascending: false }),
-      supabase.from("expenses").select("*").order("date", { ascending: false }),
-      supabase.from("appointments").select("*").order("date", { ascending: true }),
-      supabase.from("customer_lifecycle").select("*").order("linked_name"),
-    ]).then(([customers, jobs, leads, expenses, appointments, lifecycle]) => {
+    void (async () => {
+      const client = supabase;
+      const [customers, jobs, leads, expenses, appointments, lifecycle] = await Promise.all([
+        client.from("customers").select("*").order("customer_name"),
+        client.from("jobs").select("*").order("delivery_date", { ascending: true }),
+        client.from("leads").select("*").order("created_date", { ascending: false }),
+        client.from("expenses").select("*").order("date", { ascending: false }),
+        client.from("appointments").select("*").order("date", { ascending: true }),
+        client.from("customer_lifecycle").select("*").order("linked_name"),
+      ]);
       if (cancelled) return;
+      // Any error here means the studio tables are unreachable (signed out, or
+      // not a member). The local copy stays on screen rather than blanking out.
+      if ([customers, jobs, leads, expenses, appointments, lifecycle].some((result) => result.error)) {
+        setCloudState("offline");
+        return;
+      }
       const next = { customers: (customers.data || []) as Customer[], jobs: (jobs.data || []) as Job[], leads: (leads.data || []) as Lead[], expenses: (expenses.data || []) as Expense[], appointments: (appointments.data || []) as Appointment[], lifecycle: (lifecycle.data || []) as Lifecycle[] };
-      if (Object.values(next).some((rows) => rows.length > 0)) setData(next);
-    });
+      const remoteTotal = Object.values(next).reduce((sum, rows) => sum + rows.length, 0);
+      if (remoteTotal > 0) {
+        setData(next);
+        setCloudState("synced");
+        return;
+      }
+      // The studio tables are empty. Push this browser's records up once so the
+      // history stops living only here -- but only if this device has actually
+      // saved a workspace, otherwise it would upload the demo seed records.
+      if (!hasStoredData()) { setCloudState("synced"); return; }
+      const local = loadStoredData();
+      const localTotal = Object.values(local).reduce((sum, rows) => sum + rows.length, 0);
+      if (localTotal === 0) { setCloudState("synced"); return; }
+      setCloudState("migrating");
+      const stamp = (rows: Record<string, unknown>[]) => rows.map((row) => forPostgres({ created_date: new Date().toISOString(), ...row }));
+      const pushes = [
+        client.from("customers").upsert(stamp(local.customers as unknown as Record<string, unknown>[])),
+        client.from("jobs").upsert(stamp(local.jobs as unknown as Record<string, unknown>[])),
+        client.from("leads").upsert(stamp(local.leads as unknown as Record<string, unknown>[])),
+        client.from("expenses").upsert(stamp(local.expenses as unknown as Record<string, unknown>[])),
+        client.from("appointments").upsert(stamp(local.appointments as unknown as Record<string, unknown>[])),
+        client.from("customer_lifecycle").upsert(stamp(local.lifecycle as unknown as Record<string, unknown>[])),
+      ];
+      const results = await Promise.all(pushes);
+      if (cancelled) return;
+      setCloudState(results.some((result) => result.error) ? "offline" : "synced");
+    })();
     return () => { cancelled = true; };
-  }, []);
+  }, [signedInUserId]);
 
   useEffect(() => {
     try {
@@ -1038,18 +1135,18 @@ export default function Home() {
   const openNewAppointmentForCustomer = (customer: Customer) => { setNewAppointmentCustomer(customer); setDetail(null); setView("new-appointment"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const closeDetail = () => { setDetail(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const toast = (message: string) => { setToastText(message); window.setTimeout(() => setToastText(""), 2800); };
-  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); if (supabase) void supabase.from("jobs").insert(job); };
-  const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(expense); };
+  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); if (supabase) void supabase.from("jobs").insert(forPostgres(job)); };
+  const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(forPostgres(expense)); };
   const createWaitingEntry = (entry: WaitingEntry) => { setWaitingList((current) => [entry, ...current]); toast("Customer added to the waiting list."); };
-  const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(appointment); };
-  const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); if (supabase) void supabase.from("customers").insert(customer); };
-  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(lead); };
+  const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(forPostgres(appointment)); };
+  const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); if (supabase) void supabase.from("customers").insert(forPostgres(customer)); };
+  const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(forPostgres(lead)); };
   const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void supabase.from("appointments").update({ status: "Completed" }).eq("id", appointment.id); };
   const updateCustomer = (updated: Customer) => {
     const previous = data.customers.find((item) => item.id === updated.id);
     setData((current) => ({ ...current, customers: current.customers.map((item) => item.id === updated.id ? updated : item), jobs: current.jobs.map((job) => job.customer_id === updated.id || job.customer_name === previous?.customer_name ? { ...job, customer_name: updated.customer_name, phone_number: updated.phone_number, email: updated.email } : job) }));
     if (supabase) {
-      void supabase.from("customers").update({ ...updated, updated_date: new Date().toISOString() }).eq("id", updated.id);
+      void supabase.from("customers").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
       void supabase.from("jobs").update({ customer_name: updated.customer_name, phone_number: updated.phone_number, updated_date: new Date().toISOString() }).eq("customer_id", updated.id);
     }
     setEditingCustomer(null);
@@ -1059,26 +1156,26 @@ export default function Home() {
     setData((current) => ({ ...current, jobs: current.jobs.map((item) => item.id === updated.id ? updated : item) }));
     if (supabase) {
       const { email: _email, ...jobFields } = updated;
-      void supabase.from("jobs").update({ ...jobFields, updated_date: new Date().toISOString() }).eq("id", updated.id);
+      void supabase.from("jobs").update(forPostgres({ ...jobFields, updated_date: new Date().toISOString() })).eq("id", updated.id);
     }
     setEditingJob(null);
     toast("Job updated.");
   };
   const updateLead = (updated: Lead) => {
     setData((current) => ({ ...current, leads: current.leads.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("leads").update({ ...updated, updated_date: new Date().toISOString() }).eq("id", updated.id);
+    if (supabase) void supabase.from("leads").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
     setEditingLead(null);
     toast("Lead updated.");
   };
   const updateAppointment = (updated: Appointment) => {
     setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("appointments").update({ ...updated, updated_date: new Date().toISOString() }).eq("id", updated.id);
+    if (supabase) void supabase.from("appointments").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
     setEditingAppointment(null);
     toast("Appointment updated.");
   };
   const updateExpense = (updated: Expense) => {
     setData((current) => ({ ...current, expenses: current.expenses.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("expenses").update({ ...updated, updated_date: new Date().toISOString() }).eq("id", updated.id);
+    if (supabase) void supabase.from("expenses").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
     setEditingExpense(null);
     toast("Expense updated.");
   };
@@ -1089,7 +1186,7 @@ export default function Home() {
   };
   const updateLifecycle = (updated: Lifecycle) => {
     setData((current) => ({ ...current, lifecycle: current.lifecycle.map((item) => item.id === updated.id ? updated : item) }));
-    if (supabase) void supabase.from("customer_lifecycle").update({ ...updated, updated_date: new Date().toISOString() }).eq("id", updated.id);
+    if (supabase) void supabase.from("customer_lifecycle").update(forPostgres({ ...updated, updated_date: new Date().toISOString() })).eq("id", updated.id);
     setEditingLifecycle(null);
     toast("Lifecycle updated.");
   };
@@ -1113,7 +1210,7 @@ export default function Home() {
   if (supabase && !session) return <SignIn />;
 
   return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Scissors size={18} /></div><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div></div><button className="search-box" style={{ width: "100%" }} onClick={() => setSearchOpen(true)}><Search size={16} /><span style={{ fontSize: 14, color: "#a49e97" }}>Search...</span></button><nav className="nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav><div className="studio-name">Rachel&apos;s Seamstress Studio</div>{supabase && session && <div className="auth-account"><button className="nav-item auth-signout" onClick={() => void supabase?.auth.signOut()}>Sign out{session.user?.email ? ` · ${session.user.email}` : ""}</button><button className="nav-item auth-signout" onClick={() => { setRecoveryMode(false); setPasswordOpen(true); }}>Change password</button></div>}</aside>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark"><Scissors size={18} /></div><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div></div><button className="search-box" style={{ width: "100%" }} onClick={() => setSearchOpen(true)}><Search size={16} /><span style={{ fontSize: 14, color: "#a49e97" }}>Search...</span></button><nav className="nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav><div className="studio-name">Rachel&apos;s Seamstress Studio</div>{supabase && <div className={`sync-badge ${cloudState}`} role="status">{cloudState === "synced" ? "Saved to the studio database" : cloudState === "migrating" ? "Copying this device's records to the database…" : cloudState === "offline" ? "Saved on this device only" : "Checking your records…"}</div>}{supabase && session && <div className="auth-account"><button className="nav-item auth-signout" onClick={() => void supabase?.auth.signOut()}>Sign out{session.user?.email ? ` · ${session.user.email}` : ""}</button><button className="nav-item auth-signout" onClick={() => { setRecoveryMode(false); setPasswordOpen(true); }}>Change password</button></div>}</aside>
     <main className="main-shell"><div className="mobile-topbar"><button className="icon-button" aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((open) => !open)}>{mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}</button><div className="brand-name">Stitch &amp; Thread</div><button className="icon-button" aria-label="Search studio" onClick={() => { setMobileMenuOpen(false); setSearchOpen(true); }}><Search size={18} /></button></div>{mobileMenuOpen && <div className="mobile-menu-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setMobileMenuOpen(false)}><div className="mobile-menu-panel" role="dialog" aria-modal="true" aria-label="Navigation menu"><div className="mobile-menu-heading"><div><div className="brand-name">Stitch &amp; Thread</div><div className="brand-subtitle">Studio Manager</div></div><button className="icon-button" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)}><X size={18} /></button></div><nav className="mobile-menu-nav">{navItems.map(({ key, label, icon: Icon }) => <button key={key} className={`nav-item ${view === key ? "active" : ""}`} onClick={() => go(key)}><Icon size={17} />{label}</button>)}<button className={`nav-item accent ${view === "new-job" ? "active" : ""}`} onClick={() => go("new-job")}><Plus size={17} />Add Job</button></nav></div></div>}<div className="content" aria-label={`${title} page`}>
       {view === "dashboard" && <DashboardView data={data} go={go} onSelectJob={openJob} />}
       {view === "jobs" && selectedJob ? <JobDetailView job={selectedJob} data={data} onBack={closeDetail} onSelectJob={openJob} onEdit={setEditingJob} /> : null}

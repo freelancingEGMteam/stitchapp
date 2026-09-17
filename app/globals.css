@@ -385,22 +385,34 @@ a { color: inherit; text-decoration: none; }
 .hours-exception-add input, .hours-exception-add select { border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 13px; }
 
 /* Blocked-dates calendar in the hours editor */
-.date-cal { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface-soft); }
-.date-cal-head { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 10px; }
-.date-day { aspect-ratio: 1 / 1; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; display: grid; place-items: center; padding: 0; }
+.date-cal { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface-soft); max-width: 380px; }
+.date-cal-head { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 8px; }
+.date-day { height: 34px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 12px; font-weight: 600; display: grid; place-items: center; padding: 0; }
 .date-day:hover:not(:disabled) { border-color: var(--rose); }
 .date-day.off { background: #f4f1ec; color: #b6ada2; border-color: transparent; text-decoration: line-through; }
 .date-day.custom { border-color: var(--amber); background: var(--amber-soft); }
 .date-day.custom.off { background: #f1e3df; border-color: var(--rose); color: var(--rose-deep); }
-.date-day.selected { outline: 2px solid var(--rose); outline-offset: 1px; }
+.date-day.picked { outline: 2px solid var(--rose); outline-offset: 1px; }
 .date-day.outside { visibility: hidden; }
-.date-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.date-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 9px; color: var(--muted); font-size: 11px; }
 .date-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .date-dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; border: 1px solid var(--border); }
 .date-dot.weekly { background: var(--surface); }
 .date-dot.custom { background: var(--amber-soft); border-color: var(--amber); }
 .date-dot.off { background: #f4f1ec; border-color: transparent; }
 .date-dot.blocked { background: #f1e3df; border-color: var(--rose); }
+
+/* Regular-week multi-select, replacing the seven per-day rows */
+.week-picker { margin-top: 14px; }
+.week-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.week-chip { flex: 1 1 74px; min-width: 74px; display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--ink); font-family: inherit; text-align: left; }
+.week-chip span { font-size: 13px; font-weight: 700; }
+.week-chip small { font-size: 11px; color: var(--muted); }
+.week-chip.open span { color: var(--ink); }
+.week-chip:not(.open) span { color: #b6ada2; }
+.week-chip.picked { border-color: var(--rose); box-shadow: inset 0 0 0 1px var(--rose); background: var(--rose-soft, #f8ecea); }
+.week-apply { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.week-apply input { border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 13px; }
 .date-editor { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); display: grid; gap: 8px; }
 .date-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .date-editor-head strong { font-size: 14px; }
@@ -427,6 +439,10 @@ a { color: inherit; text-decoration: none; }
 .auth-alternate:disabled { opacity: .5; cursor: not-allowed; }
 .auth-account { display: grid; gap: 4px; margin-top: auto; }
 .auth-account .auth-signout { margin-top: 0; }
+.sync-badge { margin: 6px 0 2px; font-size: 11px; line-height: 1.35; color: var(--muted); }
+.sync-badge.synced { color: var(--sage, #6f7d64); }
+.sync-badge.offline { color: var(--rose-deep); }
+.sync-badge.migrating { color: var(--amber, #b4813a); }
 @media (max-width: 720px) {
   .booking-request { align-items: flex-start; flex-wrap: wrap; }
   .booking-request-when { flex: 0 0 78px; }

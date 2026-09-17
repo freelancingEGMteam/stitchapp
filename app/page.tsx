@@ -758,6 +758,9 @@ function BookingHoursEditor() {
   const badWindow = draft.dayHours.some((hours) => hours !== null && toMinutes(hours.close) <= toMinutes(hours.open));
   const exceptionList = Object.values(draft.exceptions).sort((a, b) => a.date.localeCompare(b.date));
   const dateCells = calMonth === null ? [] : monthGrid(Math.floor(calMonth / 12), calMonth % 12);
+  // The calendar is for planning ahead, so anything before today is inert.
+  const todayKey = dateKey(new Date());
+  const thisMonth = monthIndexOf(todayKey);
 
   /** Ticking dates accumulates, so several can be changed in one go. */
   const toggleDate = (key: string) => setPickedDates((current) => {
@@ -839,7 +842,7 @@ function BookingHoursEditor() {
 
       <div className="date-cal">
         <div className="date-cal-head">
-          <button type="button" className="booking-cal-nav" aria-label="Previous month" onClick={() => setCalMonth((month) => (month === null ? month : month - 1))}>‹</button>
+          <button type="button" className="booking-cal-nav" aria-label="Previous month" disabled={calMonth === null || calMonth <= thisMonth} onClick={() => setCalMonth((month) => (month === null ? month : month - 1))}>‹</button>
           <div className="booking-cal-title">{calMonth === null ? "" : monthTitle(Math.floor(calMonth / 12), calMonth % 12)}</div>
           <button type="button" className="booking-cal-nav" aria-label="Next month" onClick={() => setCalMonth((month) => (month === null ? month : month + 1))}>›</button>
         </div>
@@ -848,13 +851,14 @@ function BookingHoursEditor() {
           const inMonth = calMonth !== null && monthIndexOf(key) === calMonth;
           const hours = hoursForDate(key, draft);
           const custom = key in draft.exceptions;
-          const booked = bookedByDate[key] || 0;
+          const isPast = key < todayKey;
+          const booked = isPast ? 0 : bookedByDate[key] || 0;
           return <button
             key={key}
             type="button"
-            disabled={!inMonth}
-            aria-label={`${prettyDayLong(key)} — ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}${booked ? `, ${booked} booked` : ""}`}
-            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${pickedDates.includes(key) ? " picked" : ""}${booked ? " has-bookings" : ""}${inMonth ? "" : " outside"}`}
+            disabled={!inMonth || isPast}
+            aria-label={`${prettyDayLong(key)} — ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}${isPast ? ", in the past" : booked ? `, ${booked} booked` : ""}`}
+            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${isPast ? " past" : ""}${pickedDates.includes(key) ? " picked" : ""}${booked ? " has-bookings" : ""}${inMonth ? "" : " outside"}`}
             onClick={() => toggleDate(key)}
           ><span className="date-day-num">{parseDateKey(key).getDate()}</span>{booked > 0 && <span className="date-day-booked">{booked}</span>}</button>;
         })}</div>

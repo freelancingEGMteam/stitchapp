@@ -392,7 +392,7 @@ a { color: inherit; text-decoration: none; }
 .date-cal .booking-cal-dow { gap: 6px; margin-bottom: 8px; }
 .date-cal .booking-cal-dow span { font-size: 11px; }
 .date-cal .booking-cal-grid { gap: 6px; }
-.date-day { height: 46px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 14px; font-weight: 600; display: grid; place-items: center; padding: 0; }
+.date-day { position: relative; height: 46px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 14px; font-weight: 600; display: grid; place-items: center; padding: 0; }
 .date-day:hover:not(:disabled) { border-color: var(--rose); }
 .date-day.off { background: #f4f1ec; color: #b6ada2; border-color: transparent; text-decoration: line-through; }
 .date-day.custom { border-color: var(--amber); background: var(--amber-soft); }
@@ -407,7 +407,9 @@ a { color: inherit; text-decoration: none; }
 .date-dot.off { background: #f4f1ec; border-color: transparent; }
 .date-dot.blocked { background: #f1e3df; border-color: var(--rose); }
 .date-dot.booked { background: var(--sage, #6f7d64); border-color: var(--sage, #6f7d64); }
-.date-day { position: relative; }
+.date-day.past { opacity: .35; }
+.date-day.past:disabled { cursor: default; }
+.date-day.past .date-day-num { text-decoration: none; }
 .date-day-num { line-height: 1; }
 .date-day-booked { position: absolute; top: 3px; right: 4px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--sage, #6f7d64); color: #fff; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; }
 .date-day.has-bookings { box-shadow: inset 0 -3px 0 0 var(--sage, #6f7d64); }

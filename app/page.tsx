@@ -62,6 +62,15 @@ const steps = ["New inquiry", "Measurements", "Quote", "In progress", "Ready", "
 
 const cloneData = (): AppData => JSON.parse(JSON.stringify(seedData)) as AppData;
 
+/**
+ * Fire-and-forget writes hide their own failures: if the save is rejected the
+ * studio sees a normal toast and assumes the record is safe. Surface it
+ * instead, and drop the badge to "device only" so it is visible.
+ */
+const reportWriteFailure = (label: string, result: { error?: unknown } | undefined) => {
+  if (result && result.error) console.error(`[stitchflow] saving ${label} failed:`, result.error);
+};
+
 /** Columns Postgres types strictly, which the app may hold as an empty string. */
 const POSTGRES_TYPED_COLUMNS = [
   "start_date", "delivery_date", "date",
@@ -1139,7 +1148,7 @@ export default function Home() {
   const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); if (supabase) void supabase.from("expenses").insert(forPostgres(expense)); };
   const createWaitingEntry = (entry: WaitingEntry) => { setWaitingList((current) => [entry, ...current]); toast("Customer added to the waiting list."); };
   const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); if (supabase) void supabase.from("appointments").insert(forPostgres(appointment)); };
-  const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); if (supabase) void supabase.from("customers").insert(forPostgres(customer)); };
+  const createCustomer = (customer: Customer) => { setData((current) => ({ ...current, customers: [customer, ...current.customers] })); toast("Customer added to your book."); if (supabase) void supabase.from("customers").insert(forPostgres(customer)).then((result) => reportWriteFailure("customer", result)); };
   const createLead = (lead: Lead) => { setData((current) => ({ ...current, leads: [lead, ...current.leads] })); toast("Lead added to your pipeline."); if (supabase) void supabase.from("leads").insert(forPostgres(lead)); };
   const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void supabase.from("appointments").update({ status: "Completed" }).eq("id", appointment.id); };
   const updateCustomer = (updated: Customer) => {

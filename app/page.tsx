@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
-import { BookingRules, DayException, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay, toMinutes } from "@/lib/booking";
+import { BookingRules, bookingRulesFrom, closedDaysLabel, dateKey, dayNames, formatSlot, hoursForDate, monthGrid, monthIndexOf, monthTitle, openingHoursLabel, parseDateKey, prettyDay, prettyDayLong, toMinutes } from "@/lib/booking";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import SignIn from "./SignIn";
@@ -567,10 +567,12 @@ function BookingHoursEditor() {
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
-  const [exceptionDate, setExceptionDate] = useState("");
-  const [exceptionMode, setExceptionMode] = useState("closed");
-  const [exceptionOpen, setExceptionOpen] = useState("10:00");
-  const [exceptionClose, setExceptionClose] = useState("14:00");
+  // Which month the date calendar is showing, and which date is being edited.
+  const [calMonth, setCalMonth] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [dateMode, setDateMode] = useState<"week" | "closed" | "custom">("week");
+  const [dateOpen, setDateOpen] = useState("10:00");
+  const [dateClose, setDateClose] = useState("14:00");
 
   useEffect(() => {
     if (!supabase) return;
@@ -580,6 +582,11 @@ function BookingHoursEditor() {
     });
     return () => { cancelled = true; };
   }, []);
+
+  // Start the date calendar on the current month.
+  useEffect(() => {
+    if (calMonth === null) setCalMonth(monthIndexOf(dateKey(new Date())));
+  }, [calMonth]);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -626,24 +633,34 @@ function BookingHoursEditor() {
   const noOpenDays = draft.dayHours.every((hours) => hours === null);
   const badWindow = draft.dayHours.some((hours) => hours !== null && toMinutes(hours.close) <= toMinutes(hours.open));
   const exceptionList = Object.values(draft.exceptions).sort((a, b) => a.date.localeCompare(b.date));
+  const dateCells = calMonth === null ? [] : monthGrid(Math.floor(calMonth / 12), calMonth % 12);
 
-  const addException = () => {
-    if (!exceptionDate) return;
-    if (exceptionMode === "custom" && toMinutes(exceptionClose) <= toMinutes(exceptionOpen)) {
+  const selectDate = (key: string) => {
+    setSelectedDate(key);
+    const existing = draft.exceptions[key];
+    if (!existing) { setDateMode("week"); return; }
+    if (existing.open && existing.close) { setDateMode("custom"); setDateOpen(existing.open); setDateClose(existing.close); return; }
+    setDateMode("closed");
+  };
+
+  const applyDate = () => {
+    if (!selectedDate) return;
+    if (dateMode === "custom" && toMinutes(dateClose) <= toMinutes(dateOpen)) {
       setError("That date's closing time is before its opening time."); setNote(""); return;
     }
-    const entry: DayException = exceptionMode === "closed"
-      ? { date: exceptionDate, open: null, close: null }
-      : { date: exceptionDate, open: exceptionOpen, close: exceptionClose };
-    setDraft({ ...draft, exceptions: { ...draft.exceptions, [exceptionDate]: entry } });
-    setExceptionDate("");
+    const next = { ...draft.exceptions };
+    if (dateMode === "week") delete next[selectedDate];
+    else if (dateMode === "closed") next[selectedDate] = { date: selectedDate, open: null, close: null };
+    else next[selectedDate] = { date: selectedDate, open: dateOpen, close: dateClose };
+    setDraft({ ...draft, exceptions: next });
     setError("");
   };
 
-  const removeException = (date: string) => {
+  const clearDate = (key: string) => {
     const next = { ...draft.exceptions };
-    delete next[date];
+    delete next[key];
     setDraft({ ...draft, exceptions: next });
+    setSelectedDate(null);
   };
 
   return <form className="card hours-card" onSubmit={save}>
@@ -678,26 +695,58 @@ function BookingHoursEditor() {
     </div>
 
     <div className="field" style={{ marginTop: 18 }}>
-      <label>Specific dates</label>
-      <p className="row-meta" style={{ margin: "4px 0 10px" }}>Override the weekly pattern for one date — a holiday, or an extra opening.</p>
-      {exceptionList.length > 0 && <div className="hours-exceptions">{exceptionList.map((exception) => <div className="hours-day-row on" key={exception.date}>
-        <span className="hours-exception-date">{prettyDay(exception.date)}</span>
-        <span className="hours-exception-what">{exception.open && exception.close ? `${formatSlot(exception.open)} – ${formatSlot(exception.close)}` : "Closed all day"}</span>
-        {exception.note && <span className="hours-sep">{exception.note}</span>}
-        <button type="button" className="button small" onClick={() => removeException(exception.date)}>Remove</button>
-      </div>)}</div>}
-      <div className="hours-exception-add">
-        <input type="date" aria-label="Exception date" value={exceptionDate} onChange={(event) => setExceptionDate(event.target.value)} />
-        <select aria-label="Exception type" value={exceptionMode} onChange={(event) => setExceptionMode(event.target.value)}>
-          <option value="closed">Closed all day</option>
-          <option value="custom">Different hours</option>
-        </select>
-        {exceptionMode === "custom" && <>
-          <input type="time" aria-label="Exception opening time" value={exceptionOpen} onChange={(event) => setExceptionOpen(event.target.value)} />
+      <label>Dates you are open or closed</label>
+      <p className="row-meta" style={{ margin: "4px 0 10px" }}>Your weekly hours apply to every date by default. Tap a date to close it, or give it its own times.</p>
+
+      <div className="date-cal">
+        <div className="date-cal-head">
+          <button type="button" className="booking-cal-nav" aria-label="Previous month" onClick={() => setCalMonth((month) => (month === null ? month : month - 1))}>‹</button>
+          <div className="booking-cal-title">{calMonth === null ? "" : monthTitle(Math.floor(calMonth / 12), calMonth % 12)}</div>
+          <button type="button" className="booking-cal-nav" aria-label="Next month" onClick={() => setCalMonth((month) => (month === null ? month : month + 1))}>›</button>
+        </div>
+        <div className="booking-cal-dow">{["S", "M", "T", "W", "T", "F", "S"].map((label, index) => <span key={index}>{label}</span>)}</div>
+        <div className="booking-cal-grid">{dateCells.map((key) => {
+          const inMonth = calMonth !== null && monthIndexOf(key) === calMonth;
+          const hours = hoursForDate(key, draft);
+          const custom = key in draft.exceptions;
+          return <button
+            key={key}
+            type="button"
+            disabled={!inMonth}
+            aria-label={`${prettyDayLong(key)} — ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}`}
+            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${key === selectedDate ? " selected" : ""}${inMonth ? "" : " outside"}`}
+            onClick={() => selectDate(key)}
+          >{parseDateKey(key).getDate()}</button>;
+        })}</div>
+        <div className="date-legend">
+          <span><i className="date-dot weekly" />Weekly hours</span>
+          <span><i className="date-dot custom" />Own hours</span>
+          <span><i className="date-dot off" />Closed</span>
+          <span><i className="date-dot blocked" />Blocked by you</span>
+        </div>
+      </div>
+
+      {selectedDate && <div className="date-editor">
+        <div className="date-editor-head">
+          <strong>{prettyDayLong(selectedDate)}</strong>
+          <button type="button" className="icon-button" aria-label="Close date editor" onClick={() => setSelectedDate(null)}><X size={16} /></button>
+        </div>
+        <label className="date-choice"><input type="radio" name="date-mode" checked={dateMode === "week"} onChange={() => setDateMode("week")} /><span>Use my weekly hours</span></label>
+        <label className="date-choice"><input type="radio" name="date-mode" checked={dateMode === "closed"} onChange={() => setDateMode("closed")} /><span>Closed all day</span></label>
+        <label className="date-choice"><input type="radio" name="date-mode" checked={dateMode === "custom"} onChange={() => setDateMode("custom")} /><span>Different hours</span></label>
+        {dateMode === "custom" && <div className="date-editor-times">
+          <input type="time" aria-label="Date opening time" value={dateOpen} onChange={(event) => setDateOpen(event.target.value)} />
           <span className="hours-sep">to</span>
-          <input type="time" aria-label="Exception closing time" value={exceptionClose} onChange={(event) => setExceptionClose(event.target.value)} />
-        </>}
-        <button type="button" className="button" onClick={addException} disabled={!exceptionDate}>Add date</button>
+          <input type="time" aria-label="Date closing time" value={dateClose} onChange={(event) => setDateClose(event.target.value)} />
+        </div>}
+        <div className="date-editor-actions">
+          <button type="button" className="button small primary" onClick={applyDate}>Apply to this date</button>
+          {selectedDate in draft.exceptions && <button type="button" className="button small" onClick={() => clearDate(selectedDate)}>Clear override</button>}
+        </div>
+      </div>}
+
+      <div className="row-meta" style={{ marginTop: 10 }}>
+        {exceptionList.length === 0 ? "No dates differ from your weekly hours." : `${exceptionList.length} date${exceptionList.length === 1 ? "" : "s"} differ from your weekly hours.`}
       </div>
     </div>
 

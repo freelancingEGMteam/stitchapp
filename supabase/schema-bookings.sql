@@ -149,6 +149,45 @@ create table if not exists booking_settings (
 
 insert into booking_settings (id) values ('default') on conflict (id) do nothing;
 
+-- ---------------------------------------------------------------------------
+-- Per-day hours.
+--
+-- The studio is not a fixed shop: Tuesday might be 4-6pm while Wednesday is
+-- 9-5. day_hours is a 7-element array, index 0 = Sunday, where each element
+-- is null (closed) or {"open":"HH:MM","close":"HH:MM"}.
+--
+-- The single open_time/close_time/open_days columns above are kept only so
+-- the backfill below has something to read; the app uses day_hours.
+-- ---------------------------------------------------------------------------
+
+alter table booking_settings add column if not exists day_hours jsonb;
+
+-- Backfill any row that has not been migrated yet.
+update booking_settings
+set day_hours = (
+  select jsonb_agg(
+    case when d = any (open_days)
+      then jsonb_build_object('open', open_time, 'close', close_time)
+      else null end
+    order by d)
+  from generate_series(0, 6) as d
+)
+where day_hours is null;
+
+-- The studio is closed Saturday and Sunday, open Monday to Friday 9-5.
+-- Only applied to a row still carrying the original placeholder hours, so a
+-- studio that has already set its own is left alone.
+update booking_settings
+set day_hours = '[null,{"open":"09:00","close":"17:00"},{"open":"09:00","close":"17:00"},{"open":"09:00","close":"17:00"},{"open":"09:00","close":"17:00"},{"open":"09:00","close":"17:00"},null]'::jsonb
+where day_hours = (
+  select jsonb_agg(
+    case when d = any (array[2,3,4,5,6])
+      then jsonb_build_object('open', '09:00', 'close', '17:00')
+      else null end
+    order by d)
+  from generate_series(0, 6) as d
+);
+
 alter table booking_settings enable row level security;
 
 drop policy if exists "public read booking settings" on booking_settings;
@@ -161,21 +200,33 @@ create or replace function public.studio_save_booking_settings(pass text, patch 
 returns boolean
 language plpgsql security definer set search_path = public
 as $$
+declare
+  entry jsonb;
 begin
   if not exists (select 1 from studio_settings where key = 'studio_key' and value = pass) then
     return false;
   end if;
-  if (patch->>'open_time') !~ '^[0-2][0-9]:[0-5][0-9]$' or (patch->>'close_time') !~ '^[0-2][0-9]:[0-5][0-9]$' then
-    return false;
+
+  -- day_hours, when supplied, must be a full week of null-or-window entries.
+  if patch ? 'day_hours' then
+    if jsonb_typeof(patch->'day_hours') <> 'array' or jsonb_array_length(patch->'day_hours') <> 7 then
+      return false;
+    end if;
+    for entry in select * from jsonb_array_elements(patch->'day_hours') loop
+      if entry <> 'null'::jsonb then
+        if jsonb_typeof(entry) <> 'object'
+          or (entry->>'open') !~ '^[0-2][0-9]:[0-5][0-9]$'
+          or (entry->>'close') !~ '^[0-2][0-9]:[0-5][0-9]$'
+          or (entry->>'close') <= (entry->>'open') then
+          return false;
+        end if;
+      end if;
+    end loop;
   end if;
+
   update booking_settings set
     slot_minutes = coalesce((patch->>'slot_minutes')::int, slot_minutes),
-    open_time = coalesce(patch->>'open_time', open_time),
-    close_time = coalesce(patch->>'close_time', close_time),
-    open_days = case when patch ? 'open_days'
-      then (select coalesce(array_agg(value::int order by value::int), '{}')
-            from jsonb_array_elements_text(patch->'open_days'))
-      else open_days end,
+    day_hours = coalesce(patch->'day_hours', day_hours),
     lead_hours = coalesce((patch->>'lead_hours')::int, lead_hours),
     horizon_days = coalesce((patch->>'horizon_days')::int, horizon_days),
     allow_same_day = coalesce((patch->>'allow_same_day')::boolean, allow_same_day),

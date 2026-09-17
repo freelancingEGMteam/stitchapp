@@ -76,19 +76,31 @@ create or replace function public.studio_save_booking_settings(patch jsonb)
 returns boolean
 language plpgsql security definer set search_path = public
 as $$
+declare
+  entry jsonb;
 begin
   if not public.studio_is_member() then return false; end if;
-  if (patch->>'open_time') !~ '^[0-2][0-9]:[0-5][0-9]$' or (patch->>'close_time') !~ '^[0-2][0-9]:[0-5][0-9]$' then
-    return false;
+
+  -- day_hours, when supplied, must be a full week of null-or-window entries.
+  if patch ? 'day_hours' then
+    if jsonb_typeof(patch->'day_hours') <> 'array' or jsonb_array_length(patch->'day_hours') <> 7 then
+      return false;
+    end if;
+    for entry in select * from jsonb_array_elements(patch->'day_hours') loop
+      if entry <> 'null'::jsonb then
+        if jsonb_typeof(entry) <> 'object'
+          or (entry->>'open') !~ '^[0-2][0-9]:[0-5][0-9]$'
+          or (entry->>'close') !~ '^[0-2][0-9]:[0-5][0-9]$'
+          or (entry->>'close') <= (entry->>'open') then
+          return false;
+        end if;
+      end if;
+    end loop;
   end if;
+
   update booking_settings set
     slot_minutes = coalesce((patch->>'slot_minutes')::int, slot_minutes),
-    open_time = coalesce(patch->>'open_time', open_time),
-    close_time = coalesce(patch->>'close_time', close_time),
-    open_days = case when patch ? 'open_days'
-      then (select coalesce(array_agg(value::int order by value::int), '{}')
-            from jsonb_array_elements_text(patch->'open_days'))
-      else open_days end,
+    day_hours = coalesce(patch->'day_hours', day_hours),
     lead_hours = coalesce((patch->>'lead_hours')::int, lead_hours),
     horizon_days = coalesce((patch->>'horizon_days')::int, horizon_days),
     allow_same_day = coalesce((patch->>'allow_same_day')::boolean, allow_same_day),

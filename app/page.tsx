@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
-import { BookingRules, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay } from "@/lib/booking";
+import { BookingRules, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay, toMinutes } from "@/lib/booking";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import SignIn from "./SignIn";
@@ -580,62 +580,69 @@ function BookingHoursEditor() {
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (!supabase || !draft) return;
-    // Saving an empty day list would silently fall back to the defaults on the
-    // public page, which looks like the setting was ignored.
-    if (draft.openDays.length === 0) { setError("Pick at least one open day."); setNote(""); return; }
+    // An empty week would silently fall back to the defaults on the public
+    // page, which looks like the setting was simply ignored.
+    if (draft.dayHours.every((hours) => hours === null)) { setError("Set at least one open day."); setNote(""); return; }
+    if (draft.dayHours.some((hours) => hours !== null && toMinutes(hours.close) <= toMinutes(hours.open))) {
+      setError("A closing time is before its opening time."); setNote(""); return;
+    }
     setSaving(true); setError(""); setNote("");
     const { data, error: rpcError } = await supabase.rpc("studio_save_booking_settings", {
       patch: {
         slot_minutes: draft.slotMinutes,
-        open_time: draft.openTime,
-        close_time: draft.closeTime,
-        open_days: draft.openDays,
+        day_hours: draft.dayHours,
         lead_hours: draft.leadHours,
         horizon_days: draft.horizonDays,
         allow_same_day: draft.allowSameDay,
       },
     });
     setSaving(false);
-    if (rpcError || data !== true) { setError("Could not save. Check the passphrase and try again."); return; }
+    if (rpcError || data !== true) { setError("Could not save those hours. Try again."); return; }
     setNote("Saved. The booking page picks these up straight away.");
   };
 
   if (!draft) return <div className="card"><div className="booking-muted">Loading hours…</div></div>;
 
-  const toggleDay = (day: number) => setDraft({
-    ...draft,
-    openDays: draft.openDays.includes(day)
-      ? draft.openDays.filter((item) => item !== day)
-      : [...draft.openDays, day].sort((a, b) => a - b),
+  const toggleDay = (day: number) => setDraft((current) => {
+    if (!current) return current;
+    const next = [...current.dayHours];
+    next[day] = next[day] ? null : { open: "09:00", close: "17:00" };
+    return { ...current, dayHours: next };
   });
+
+  const setDayHours = (day: number, patch: { open?: string; close?: string }) => setDraft((current) => {
+    if (!current) return current;
+    const existing = current.dayHours[day];
+    if (!existing) return current;
+    const next = [...current.dayHours];
+    next[day] = { ...existing, ...patch };
+    return { ...current, dayHours: next };
+  });
+
+  const noOpenDays = draft.dayHours.every((hours) => hours === null);
+  const badWindow = draft.dayHours.some((hours) => hours !== null && toMinutes(hours.close) <= toMinutes(hours.open));
 
   return <form className="card hours-card" onSubmit={save}>
     <div className="eyebrow">Booking hours</div>
-    <p className="row-meta" style={{ marginTop: 8 }}>These decide which times customers can choose on your booking page.</p>
+    <p className="row-meta" style={{ marginTop: 8 }}>Set your own hours for each day — tap a day to open or close it. Customers can only pick times inside these windows.</p>
 
-    <div className="hours-row">
-      <div className="field"><label htmlFor="hours-open">Opens</label>
-        <input id="hours-open" type="time" value={draft.openTime} onChange={(event) => setDraft({ ...draft, openTime: event.target.value })} required /></div>
-      <div className="field"><label htmlFor="hours-close">Closes</label>
-        <input id="hours-close" type="time" value={draft.closeTime} onChange={(event) => setDraft({ ...draft, closeTime: event.target.value })} required /></div>
+    <div className="hours-week">{dayNames.map((label, day) => {
+      const hours = draft.dayHours[day];
+      return <div className={`hours-day-row ${hours ? "on" : ""}`} key={label}>
+        <button type="button" className={`hours-day ${hours ? "on" : ""}`} aria-pressed={hours !== null} onClick={() => toggleDay(day)}>{label.slice(0, 3)}</button>
+        {hours ? <>
+          <input type="time" aria-label={`${label} opening time`} value={hours.open} onChange={(event) => setDayHours(day, { open: event.target.value })} />
+          <span className="hours-sep">to</span>
+          <input type="time" aria-label={`${label} closing time`} value={hours.close} onChange={(event) => setDayHours(day, { close: event.target.value })} />
+        </> : <span className="hours-closed">Closed</span>}
+      </div>;
+    })}</div>
+
+    <div className="hours-row" style={{ marginTop: 16 }}>
       <div className="field"><label htmlFor="hours-slot">Slot length</label>
         <select id="hours-slot" value={draft.slotMinutes} onChange={(event) => setDraft({ ...draft, slotMinutes: Number(event.target.value) })}>
           {[15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
         </select></div>
-    </div>
-
-    <div className="field" style={{ marginTop: 14 }}>
-      <label>Open days</label>
-      <div className="hours-days">{dayNames.map((label, day) => <button
-        key={label}
-        type="button"
-        className={`hours-day ${draft.openDays.includes(day) ? "on" : ""}`}
-        aria-pressed={draft.openDays.includes(day)}
-        onClick={() => toggleDay(day)}
-      >{label.slice(0, 3)}</button>)}</div>
-    </div>
-
-    <div className="hours-row" style={{ marginTop: 14 }}>
       <div className="field"><label htmlFor="hours-lead">Minimum notice</label>
         <select id="hours-lead" value={draft.leadHours} onChange={(event) => setDraft({ ...draft, leadHours: Number(event.target.value) })}>
           {[0, 2, 4, 12, 24, 48, 72].map((hours) => <option key={hours} value={hours}>{hours === 0 ? "No minimum" : `${hours} hours`}</option>)}
@@ -654,9 +661,11 @@ function BookingHoursEditor() {
     <div className="row-meta" style={{ marginTop: 14 }}>
       Customers will see <strong>{openingHoursLabel(draft)}</strong>{closedDaysLabel(draft) ? ` · ${closedDaysLabel(draft)}` : ""}
     </div>
+    {noOpenDays && <div className="booking-alert error" style={{ marginTop: 12 }}>Set at least one open day.</div>}
+    {badWindow && <div className="booking-alert error" style={{ marginTop: 12 }}>A closing time is before its opening time.</div>}
     {error && <div className="booking-alert error" style={{ marginTop: 12 }}>{error}</div>}
     {note && <div className="booking-area ok" style={{ marginTop: 12 }}><CheckCircle2 size={14} /> {note}</div>}
-    <div className="form-actions"><button type="submit" className="button primary" disabled={saving || draft.openDays.length === 0}>{saving ? "Saving…" : "Save hours"}</button></div>
+    <div className="form-actions"><button type="submit" className="button primary" disabled={saving || noOpenDays || badWindow}>{saving ? "Saving…" : "Save hours"}</button></div>
   </form>;
 }
 

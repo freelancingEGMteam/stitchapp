@@ -22,8 +22,9 @@ import {
   prettyDayLong,
   serviceArea,
   slotId,
-  slotTimeKeys,
+  slotTimeKeysForDay,
   travelAreaLabel,
+  weeklyHours,
   withinServiceArea,
 } from "@/lib/booking";
 
@@ -152,18 +153,17 @@ export default function BookingForm() {
   }, []);
 
   const bookable = useMemo(() => (now ? bookableDays(now, rules) : []), [now, rules]);
-  const slots = useMemo(() => slotTimeKeys(rules), [rules]);
 
-  // Days that are open AND still have at least one free slot. Offering a day
-  // with nothing left on it only leads the customer into a dead end.
+  // Days that are open AND still have at least one free slot. Hours differ per
+  // day, so the slots have to be worked out per date rather than once.
   const daysWithSlots = useMemo(() => {
     const set = new Set<string>();
     if (!now) return set;
     for (const key of bookable) {
-      if (slots.some((time) => isSlotAvailable(key, time, booked, now, rules))) set.add(key);
+      if (slotTimeKeysForDay(key, rules).some((time) => isSlotAvailable(key, time, booked, now, rules))) set.add(key);
     }
     return set;
-  }, [bookable, slots, booked, now, rules]);
+  }, [bookable, booked, now, rules]);
 
   useEffect(() => {
     if (day || !now || bookable.length === 0) return;
@@ -267,8 +267,8 @@ export default function BookingForm() {
   };
 
   const available = useMemo(
-    () => slots.filter((time) => now && day && isSlotAvailable(day, time, booked, now, rules)),
-    [slots, booked, day, now, rules],
+    () => (day && now ? slotTimeKeysForDay(day, rules).filter((time) => isSlotAvailable(day, time, booked, now, rules)) : []),
+    [booked, day, now, rules],
   );
 
   const notesCopy = kind === "Pick up"
@@ -341,8 +341,16 @@ export default function BookingForm() {
       </div>
       <ul className="booking-facts">
         <li><Clock3 size={14} /> {rules.slotMinutes} min</li>
-        <li><CalendarDays size={14} /> {openingHoursLabel(rules)}</li>
       </ul>
+      <div className="booking-hours">
+        <div className="booking-hours-title"><CalendarDays size={13} /> Opening hours</div>
+        {weeklyHours(rules).length === 0
+          ? <div className="booking-muted">No open days yet.</div>
+          : weeklyHours(rules).map((entry) => <div className="booking-hours-row" key={entry.day}>
+            <span>{entry.label.slice(0, 3)}</span>
+            <span>{formatSlot(entry.hours.open)} – {formatSlot(entry.hours.close)}</span>
+          </div>)}
+      </div>
       <p className="booking-aside-note">{closedDaysLabel(rules)}</p>
     </aside>
 

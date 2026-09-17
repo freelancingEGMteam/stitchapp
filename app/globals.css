@@ -294,6 +294,10 @@ a { color: inherit; text-decoration: none; }
 .booking-facts { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
 .booking-facts li { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .booking-aside-note { margin: 0; color: var(--muted); font-size: 12px; }
+.booking-hours { display: grid; gap: 4px; }
+.booking-hours-title { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+.booking-hours-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink); }
+.booking-hours-row span:first-child { color: var(--muted); font-weight: 600; }
 .booking-picker { display: grid; gap: 20px; }
 .booking-picker-title { margin: 0 0 12px; font-size: 15px; font-weight: 650; }
 .booking-cal-head { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 12px; }
@@ -367,6 +371,13 @@ a { color: inherit; text-decoration: none; }
 .hours-days { display: flex; flex-wrap: wrap; gap: 6px; }
 .hours-day { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-soft); color: var(--ink); font-size: 13px; font-weight: 600; }
 .hours-day.on { background: var(--rose); border-color: var(--rose); color: #fff; }
+.hours-week { display: grid; gap: 6px; margin-top: 14px; }
+.hours-day-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
+.hours-day-row.on { background: var(--surface); }
+.hours-day-row .hours-day { min-width: 54px; text-align: center; }
+.hours-day-row input[type="time"] { flex: 1; min-width: 0; max-width: 150px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 13px; }
+.hours-sep { color: var(--muted); font-size: 12px; }
+.hours-closed { color: var(--muted); font-size: 13px; }
 
 /* Studio sign-in */
 .auth-card { width: min(440px, 100%); margin: 0 auto; }

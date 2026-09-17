@@ -2,20 +2,24 @@ export type BookingKind = "Drop off" | "Pick up";
 
 export const bookingKinds: BookingKind[] = ["Drop off", "Pick up"];
 
+/** One day's window, or null when the studio is closed that day. */
+export type DayHours = { open: string; close: string } | null;
+
 /**
  * Studio booking rules. Slot times are the studio's own wall-clock times;
  * this assumes customers book within the same timezone, which is the
  * normal case for a local alterations studio.
+ *
+ * Hours are per day, because this is not a fixed shop: Tuesday might be
+ * 4-6pm while Wednesday is 9-5.
  *
  * These are the defaults. The studio can change them from the Bookings
  * screen, and the saved values are what the public page uses.
  */
 export type BookingRules = {
   slotMinutes: number;
-  openTime: string;
-  closeTime: string;
-  /** 0 = Sunday, so [2,3,4,5,6] is Tuesday through Saturday. */
-  openDays: number[];
+  /** Seven entries, index 0 = Sunday. null means closed that day. */
+  dayHours: DayHours[];
   /** Nothing can be booked with less notice than this. */
   leadHours: number;
   /**
@@ -28,11 +32,12 @@ export type BookingRules = {
   horizonDays: number;
 };
 
+const openNineToFive: DayHours = { open: "09:00", close: "17:00" };
+
 export const bookingConfig: BookingRules = {
   slotMinutes: 30,
-  openTime: "09:00",
-  closeTime: "17:00",
-  openDays: [2, 3, 4, 5, 6],
+  // Sunday and Saturday closed; Monday to Friday 9-5.
+  dayHours: [null, openNineToFive, openNineToFive, openNineToFive, openNineToFive, openNineToFive, null],
   leadHours: 12,
   allowSameDay: false,
   horizonDays: 60,
@@ -44,22 +49,43 @@ const clamp = (value: unknown, low: number, high: number, fallback: number) => {
   return Number.isFinite(n) ? Math.min(high, Math.max(low, Math.round(n))) : fallback;
 };
 
+/** Accepts only a well-formed 7-entry week; anything else is rejected whole. */
+const parseDayHours = (value: unknown): DayHours[] | null => {
+  if (!Array.isArray(value) || value.length !== 7) return null;
+  const out: DayHours[] = [];
+  for (const entry of value) {
+    if (entry === null) { out.push(null); continue; }
+    if (typeof entry !== "object") return null;
+    const open = (entry as Record<string, unknown>).open;
+    const close = (entry as Record<string, unknown>).close;
+    if (!isClock(open) || !isClock(close)) return null;
+    if (toMinutes(String(close)) <= toMinutes(String(open))) return null;
+    out.push({ open: String(open), close: String(close) });
+  }
+  return out;
+};
+
+/** Rebuilds a week from the older single-window columns, for rows not migrated yet. */
+const legacyDayHours = (row: Record<string, unknown>): DayHours[] => {
+  const days = Array.isArray(row.open_days)
+    ? row.open_days.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    : [];
+  if (days.length === 0) return bookingConfig.dayHours;
+  const open = isClock(row.open_time) ? String(row.open_time) : "09:00";
+  const rawClose = isClock(row.close_time) ? String(row.close_time) : "17:00";
+  const close = toMinutes(rawClose) > toMinutes(open) ? rawClose : "17:00";
+  return [0, 1, 2, 3, 4, 5, 6].map((day) => (days.includes(day) ? { open, close } : null));
+};
+
 /**
  * Turns a row from booking_settings into usable rules, discarding anything
  * malformed rather than letting bad data break the public page.
  */
 export const bookingRulesFrom = (row: Record<string, unknown> | null | undefined): BookingRules => {
   if (!row) return bookingConfig;
-  const days = Array.isArray(row.open_days)
-    ? row.open_days.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-    : [];
-  const openTime = isClock(row.open_time) ? String(row.open_time) : bookingConfig.openTime;
-  const closeTime = isClock(row.close_time) ? String(row.close_time) : bookingConfig.closeTime;
   return {
     slotMinutes: clamp(row.slot_minutes, 5, 240, bookingConfig.slotMinutes),
-    openTime,
-    closeTime: toMinutes(closeTime) > toMinutes(openTime) ? closeTime : bookingConfig.closeTime,
-    openDays: days.length ? [...new Set(days)].sort((a, b) => a - b) : bookingConfig.openDays,
+    dayHours: parseDayHours(row.day_hours) ?? legacyDayHours(row),
     leadHours: clamp(row.lead_hours, 0, 336, bookingConfig.leadHours),
     allowSameDay: row.allow_same_day === true,
     horizonDays: clamp(row.horizon_days, 1, 365, bookingConfig.horizonDays),
@@ -81,16 +107,25 @@ export const formatSlot = (time: string) => {
   return `${hour12}:${String(minutes).padStart(2, "0")} ${suffix}`;
 };
 
-/** Canonical 24h slot keys, e.g. ["09:00", "09:30", ...] */
-export const slotTimeKeys = (rules: BookingRules = bookingConfig): string[] => {
+/**
+ * Canonical 24h slot keys for one weekday, e.g. ["09:00", "09:30", ...].
+ * Empty when the studio is closed that day. `dayIndex` is 0 = Sunday.
+ */
+export const slotTimeKeys = (dayIndex: number, rules: BookingRules = bookingConfig): string[] => {
+  const hours = rules.dayHours[dayIndex];
+  if (!hours) return [];
   const out: string[] = [];
-  const open = toMinutes(rules.openTime);
-  const close = toMinutes(rules.closeTime);
+  const open = toMinutes(hours.open);
+  const close = toMinutes(hours.close);
   for (let t = open; t + rules.slotMinutes <= close; t += rules.slotMinutes) {
     out.push(`${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`);
   }
   return out;
 };
+
+/** Slots for a specific date key. */
+export const slotTimeKeysForDay = (dayKey: string, rules: BookingRules = bookingConfig) =>
+  slotTimeKeys(parseDateKey(dayKey).getDay(), rules);
 
 /** Local YYYY-MM-DD, avoiding the UTC shift that toISOString() introduces. */
 export const dateKey = (date: Date) =>
@@ -101,7 +136,7 @@ export const parseDateKey = (key: string) => {
   return new Date(year, month - 1, day);
 };
 
-export const isOpenDay = (date: Date, rules: BookingRules = bookingConfig) => rules.openDays.includes(date.getDay());
+export const isOpenDay = (date: Date, rules: BookingRules = bookingConfig) => rules.dayHours[date.getDay()] !== null;
 
 export const slotDateTime = (dayKey: string, slot: string) => {
   const day = parseDateKey(dayKey);
@@ -150,18 +185,31 @@ export const prettyDay = (key: string) =>
 export const prettyDayLong = (key: string) =>
   new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(parseDateKey(key));
 
+/** e.g. "Tue–Fri · 9:00 AM – 5:00 PM", or "… · hours vary by day". */
 export const openingHoursLabel = (rules: BookingRules = bookingConfig) => {
-  const days = [...rules.openDays].sort((a, b) => a - b);
+  const open = rules.dayHours.map((hours, day) => ({ day, hours })).filter((entry) => entry.hours !== null);
+  if (open.length === 0) return "No open days set";
+  const first = open[0].hours!;
+  const uniform = open.every((entry) => entry.hours!.open === first.open && entry.hours!.close === first.close);
+  const days = open.map((entry) => entry.day);
   const contiguous = days.every((day, index) => index === 0 || day === days[index - 1] + 1);
-  const label = days.length > 1 && contiguous
+  const dayLabel = days.length > 1 && contiguous
     ? `${dayNames[days[0]].slice(0, 3)}–${dayNames[days[days.length - 1]].slice(0, 3)}`
     : days.map((day) => dayNames[day].slice(0, 3)).join(", ");
-  return `${label} · ${formatSlot(rules.openTime)} – ${formatSlot(rules.closeTime)}`;
+  if (!uniform) return `${dayLabel} · hours vary by day`;
+  return `${dayLabel} · ${formatSlot(first.open)} – ${formatSlot(first.close)}`;
 };
 
-/** e.g. "Closed Sundays and Mondays." — empty when open every day. */
+/** Open days with their windows, in week order, for showing a full week. */
+export const weeklyHours = (rules: BookingRules = bookingConfig) =>
+  rules.dayHours
+    .map((hours, day) => ({ day, label: dayNames[day], hours }))
+    .filter((entry): entry is { day: number; label: string; hours: { open: string; close: string } } => entry.hours !== null);
+
+/** e.g. "Closed Saturdays and Sundays." — empty when open every day. */
 export const closedDaysLabel = (rules: BookingRules = bookingConfig) => {
-  const closed = [0, 1, 2, 3, 4, 5, 6].filter((day) => !rules.openDays.includes(day));
+  // Week order starting Monday, so two closed days read "Saturdays and Sundays".
+  const closed = [1, 2, 3, 4, 5, 6, 0].filter((day) => rules.dayHours[day] === null);
   if (closed.length === 0) return "";
   return `Closed ${closed.map((day) => `${dayNames[day]}s`).join(" and ")}.`;
 };

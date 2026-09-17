@@ -6,12 +6,21 @@ export const bookingKinds: BookingKind[] = ["Drop off", "Pick up"];
 export type DayHours = { open: string; close: string } | null;
 
 /**
+ * A specific calendar date that overrides the weekly pattern — a holiday, or
+ * an extra opening. `open`/`close` null means closed all day.
+ */
+export type DayException = { date: string; open: string | null; close: string | null; note?: string };
+
+/** Slots are never longer than this. */
+export const MAX_SLOT_MINUTES = 30;
+
+/**
  * Studio booking rules. Slot times are the studio's own wall-clock times;
  * this assumes customers book within the same timezone, which is the
  * normal case for a local alterations studio.
  *
- * Hours are per day, because this is not a fixed shop: Tuesday might be
- * 4-6pm while Wednesday is 9-5.
+ * Hours come in two layers: a weekly pattern, plus specific dates that
+ * override it. Anything the calendar does not mention follows the week.
  *
  * These are the defaults. The studio can change them from the Bookings
  * screen, and the saved values are what the public page uses.
@@ -20,14 +29,10 @@ export type BookingRules = {
   slotMinutes: number;
   /** Seven entries, index 0 = Sunday. null means closed that day. */
   dayHours: DayHours[];
+  /** Date-specific overrides, keyed by YYYY-MM-DD. */
+  exceptions: Record<string, DayException>;
   /** Nothing can be booked with less notice than this. */
   leadHours: number;
-  /**
-   * When false, the earliest bookable day is tomorrow. Today is left out
-   * because the notice period above would rule its slots out anyway;
-   * set true if the notice is ever lowered to allow same-day bookings.
-   */
-  allowSameDay: boolean;
   /** How far ahead the public page will offer slots. */
   horizonDays: number;
 };
@@ -38,12 +43,13 @@ export const bookingConfig: BookingRules = {
   slotMinutes: 30,
   // Sunday and Saturday closed; Monday to Friday 9-5.
   dayHours: [null, openNineToFive, openNineToFive, openNineToFive, openNineToFive, openNineToFive, null],
+  exceptions: {},
   leadHours: 12,
-  allowSameDay: false,
   horizonDays: 60,
 };
 
 const isClock = (value: unknown) => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+const isDateKey = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 const clamp = (value: unknown, low: number, high: number, fallback: number) => {
   const n = Number(value);
   return Number.isFinite(n) ? Math.min(high, Math.max(low, Math.round(n))) : fallback;
@@ -61,6 +67,23 @@ const parseDayHours = (value: unknown): DayHours[] | null => {
     if (!isClock(open) || !isClock(close)) return null;
     if (toMinutes(String(close)) <= toMinutes(String(open))) return null;
     out.push({ open: String(open), close: String(close) });
+  }
+  return out;
+};
+
+/** Individual bad dates are dropped rather than failing the whole settings row. */
+const parseExceptions = (value: unknown): Record<string, DayException> => {
+  if (!Array.isArray(value)) return {};
+  const out: Record<string, DayException> = {};
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    if (!isDateKey(row.date)) continue;
+    const closed = row.open === null || row.close === null;
+    if (closed) { out[String(row.date)] = { date: String(row.date), open: null, close: null, note: typeof row.note === "string" ? row.note : undefined }; continue; }
+    if (!isClock(row.open) || !isClock(row.close)) continue;
+    if (toMinutes(String(row.close)) <= toMinutes(String(row.open))) continue;
+    out[String(row.date)] = { date: String(row.date), open: String(row.open), close: String(row.close), note: typeof row.note === "string" ? row.note : undefined };
   }
   return out;
 };
@@ -84,10 +107,10 @@ const legacyDayHours = (row: Record<string, unknown>): DayHours[] => {
 export const bookingRulesFrom = (row: Record<string, unknown> | null | undefined): BookingRules => {
   if (!row) return bookingConfig;
   return {
-    slotMinutes: clamp(row.slot_minutes, 5, 240, bookingConfig.slotMinutes),
+    slotMinutes: clamp(row.slot_minutes, 5, MAX_SLOT_MINUTES, bookingConfig.slotMinutes),
     dayHours: parseDayHours(row.day_hours) ?? legacyDayHours(row),
+    exceptions: parseExceptions(row.exceptions),
     leadHours: clamp(row.lead_hours, 0, 336, bookingConfig.leadHours),
-    allowSameDay: row.allow_same_day === true,
     horizonDays: clamp(row.horizon_days, 1, 365, bookingConfig.horizonDays),
   };
 };
@@ -108,12 +131,28 @@ export const formatSlot = (time: string) => {
 };
 
 /**
+ * The hours actually in force on a date: a specific-date exception wins,
+ * otherwise the weekly pattern applies.
+ */
+export const hoursForDate = (dayKey: string, rules: BookingRules = bookingConfig): DayHours => {
+  const exception = rules.exceptions[dayKey];
+  if (exception) {
+    return exception.open && exception.close ? { open: exception.open, close: exception.close } : null;
+  }
+  return rules.dayHours[parseDateKey(dayKey).getDay()];
+};
+
+/**
  * Canonical 24h slot keys for one weekday, e.g. ["09:00", "09:30", ...].
  * Empty when the studio is closed that day. `dayIndex` is 0 = Sunday.
  */
 export const slotTimeKeys = (dayIndex: number, rules: BookingRules = bookingConfig): string[] => {
   const hours = rules.dayHours[dayIndex];
   if (!hours) return [];
+  return slotsWithin(hours, rules);
+};
+
+const slotsWithin = (hours: { open: string; close: string }, rules: BookingRules) => {
   const out: string[] = [];
   const open = toMinutes(hours.open);
   const close = toMinutes(hours.close);
@@ -123,9 +162,11 @@ export const slotTimeKeys = (dayIndex: number, rules: BookingRules = bookingConf
   return out;
 };
 
-/** Slots for a specific date key. */
-export const slotTimeKeysForDay = (dayKey: string, rules: BookingRules = bookingConfig) =>
-  slotTimeKeys(parseDateKey(dayKey).getDay(), rules);
+/** Slots for a specific calendar date, honouring any exception for it. */
+export const slotTimeKeysForDay = (dayKey: string, rules: BookingRules = bookingConfig) => {
+  const hours = hoursForDate(dayKey, rules);
+  return hours ? slotsWithin(hours, rules) : [];
+};
 
 /** Local YYYY-MM-DD, avoiding the UTC shift that toISOString() introduces. */
 export const dateKey = (date: Date) =>
@@ -136,7 +177,7 @@ export const parseDateKey = (key: string) => {
   return new Date(year, month - 1, day);
 };
 
-export const isOpenDay = (date: Date, rules: BookingRules = bookingConfig) => rules.dayHours[date.getDay()] !== null;
+export const isOpenDay = (date: Date, rules: BookingRules = bookingConfig) => hoursForDate(dateKey(date), rules) !== null;
 
 export const slotDateTime = (dayKey: string, slot: string) => {
   const day = parseDateKey(dayKey);
@@ -146,11 +187,14 @@ export const slotDateTime = (dayKey: string, slot: string) => {
 
 export const slotId = (dayKey: string, slot: string) => `${dayKey} ${slot}`;
 
-/** Open days from tomorrow (or today when allowSameDay) up to the horizon. */
+/**
+ * Open days from today up to the horizon. Today is included and then filtered
+ * by the notice period, so "minimum notice" is the only thing that decides
+ * whether same-day bookings are possible.
+ */
 export const bookableDays = (now = new Date(), rules: BookingRules = bookingConfig): string[] => {
   const out: string[] = [];
-  const start = rules.allowSameDay ? 0 : 1;
-  for (let offset = start; offset <= rules.horizonDays + start; offset += 1) {
+  for (let offset = 0; offset <= rules.horizonDays; offset += 1) {
     const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
     if (isOpenDay(day, rules)) out.push(dateKey(day));
   }

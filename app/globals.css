@@ -378,6 +378,11 @@ a { color: inherit; text-decoration: none; }
 .hours-day-row input[type="time"] { flex: 1; min-width: 0; max-width: 150px; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 13px; }
 .hours-sep { color: var(--muted); font-size: 12px; }
 .hours-closed { color: var(--muted); font-size: 13px; }
+.hours-exceptions { display: grid; gap: 6px; margin-bottom: 10px; }
+.hours-exception-date { min-width: 116px; font-weight: 600; font-size: 13px; color: var(--ink); }
+.hours-exception-what { flex: 1; font-size: 13px; color: var(--muted); }
+.hours-exception-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hours-exception-add input, .hours-exception-add select { border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: 13px; }
 
 /* Studio sign-in */
 .auth-card { width: min(440px, 100%); margin: 0 auto; }

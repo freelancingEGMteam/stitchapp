@@ -162,6 +162,11 @@ insert into booking_settings (id) values ('default') on conflict (id) do nothing
 
 alter table booking_settings add column if not exists day_hours jsonb;
 
+-- Specific calendar dates that override the weekly pattern: a holiday, or an
+-- extra opening. Each entry is {date, open, close, note} where a null
+-- open/close means closed all day.
+alter table booking_settings add column if not exists exceptions jsonb not null default '[]'::jsonb;
+
 -- Backfill any row that has not been migrated yet.
 update booking_settings
 set day_hours = (
@@ -224,9 +229,30 @@ begin
     end loop;
   end if;
 
+  -- Specific dates, when supplied, must be an array of {date, open, close}.
+  -- A null open/close pair means closed all day.
+  if patch ? 'exceptions' then
+    if jsonb_typeof(patch->'exceptions') <> 'array' then
+      return false;
+    end if;
+    for entry in select * from jsonb_array_elements(patch->'exceptions') loop
+      if jsonb_typeof(entry) <> 'object' or (entry->>'date') !~ '^\d{4}-\d{2}-\d{2}$' then
+        return false;
+      end if;
+      if (entry->>'open') is not null then
+        if (entry->>'open') !~ '^[0-2][0-9]:[0-5][0-9]$'
+          or (entry->>'close') !~ '^[0-2][0-9]:[0-5][0-9]$'
+          or (entry->>'close') <= (entry->>'open') then
+          return false;
+        end if;
+      end if;
+    end loop;
+  end if;
+
   update booking_settings set
     slot_minutes = coalesce((patch->>'slot_minutes')::int, slot_minutes),
     day_hours = coalesce(patch->'day_hours', day_hours),
+    exceptions = coalesce(patch->'exceptions', exceptions),
     lead_hours = coalesce((patch->>'lead_hours')::int, lead_hours),
     horizon_days = coalesce((patch->>'horizon_days')::int, horizon_days),
     allow_same_day = coalesce((patch->>'allow_same_day')::boolean, allow_same_day),

@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { AppData, Customer, Expense, Job, Lead, Lifecycle, Appointment, fullDate, initials, money, seedData, shortDate, statusTone } from "@/lib/data";
-import { BookingRules, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay, toMinutes } from "@/lib/booking";
+import { BookingRules, DayException, bookingRulesFrom, closedDaysLabel, dayNames, formatSlot, openingHoursLabel, prettyDay, toMinutes } from "@/lib/booking";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import SignIn from "./SignIn";
@@ -567,6 +567,10 @@ function BookingHoursEditor() {
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
+  const [exceptionDate, setExceptionDate] = useState("");
+  const [exceptionMode, setExceptionMode] = useState("closed");
+  const [exceptionOpen, setExceptionOpen] = useState("10:00");
+  const [exceptionClose, setExceptionClose] = useState("14:00");
 
   useEffect(() => {
     if (!supabase) return;
@@ -591,9 +595,9 @@ function BookingHoursEditor() {
       patch: {
         slot_minutes: draft.slotMinutes,
         day_hours: draft.dayHours,
+        exceptions: Object.values(draft.exceptions),
         lead_hours: draft.leadHours,
         horizon_days: draft.horizonDays,
-        allow_same_day: draft.allowSameDay,
       },
     });
     setSaving(false);
@@ -621,6 +625,26 @@ function BookingHoursEditor() {
 
   const noOpenDays = draft.dayHours.every((hours) => hours === null);
   const badWindow = draft.dayHours.some((hours) => hours !== null && toMinutes(hours.close) <= toMinutes(hours.open));
+  const exceptionList = Object.values(draft.exceptions).sort((a, b) => a.date.localeCompare(b.date));
+
+  const addException = () => {
+    if (!exceptionDate) return;
+    if (exceptionMode === "custom" && toMinutes(exceptionClose) <= toMinutes(exceptionOpen)) {
+      setError("That date's closing time is before its opening time."); setNote(""); return;
+    }
+    const entry: DayException = exceptionMode === "closed"
+      ? { date: exceptionDate, open: null, close: null }
+      : { date: exceptionDate, open: exceptionOpen, close: exceptionClose };
+    setDraft({ ...draft, exceptions: { ...draft.exceptions, [exceptionDate]: entry } });
+    setExceptionDate("");
+    setError("");
+  };
+
+  const removeException = (date: string) => {
+    const next = { ...draft.exceptions };
+    delete next[date];
+    setDraft({ ...draft, exceptions: next });
+  };
 
   return <form className="card hours-card" onSubmit={save}>
     <div className="eyebrow">Booking hours</div>
@@ -641,7 +665,7 @@ function BookingHoursEditor() {
     <div className="hours-row" style={{ marginTop: 16 }}>
       <div className="field"><label htmlFor="hours-slot">Slot length</label>
         <select id="hours-slot" value={draft.slotMinutes} onChange={(event) => setDraft({ ...draft, slotMinutes: Number(event.target.value) })}>
-          {[15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+          {[10, 15, 20, 30].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
         </select></div>
       <div className="field"><label htmlFor="hours-lead">Minimum notice</label>
         <select id="hours-lead" value={draft.leadHours} onChange={(event) => setDraft({ ...draft, leadHours: Number(event.target.value) })}>
@@ -651,11 +675,30 @@ function BookingHoursEditor() {
         <select id="hours-horizon" value={draft.horizonDays} onChange={(event) => setDraft({ ...draft, horizonDays: Number(event.target.value) })}>
           {[14, 30, 60, 90, 180].map((days) => <option key={days} value={days}>{days} days</option>)}
         </select></div>
-      <div className="field"><label htmlFor="hours-same">Same-day bookings</label>
-        <select id="hours-same" value={draft.allowSameDay ? "yes" : "no"} onChange={(event) => setDraft({ ...draft, allowSameDay: event.target.value === "yes" })}>
-          <option value="no">No — start tomorrow</option>
-          <option value="yes">Yes — allow today</option>
-        </select></div>
+    </div>
+
+    <div className="field" style={{ marginTop: 18 }}>
+      <label>Specific dates</label>
+      <p className="row-meta" style={{ margin: "4px 0 10px" }}>Override the weekly pattern for one date — a holiday, or an extra opening.</p>
+      {exceptionList.length > 0 && <div className="hours-exceptions">{exceptionList.map((exception) => <div className="hours-day-row on" key={exception.date}>
+        <span className="hours-exception-date">{prettyDay(exception.date)}</span>
+        <span className="hours-exception-what">{exception.open && exception.close ? `${formatSlot(exception.open)} – ${formatSlot(exception.close)}` : "Closed all day"}</span>
+        {exception.note && <span className="hours-sep">{exception.note}</span>}
+        <button type="button" className="button small" onClick={() => removeException(exception.date)}>Remove</button>
+      </div>)}</div>}
+      <div className="hours-exception-add">
+        <input type="date" aria-label="Exception date" value={exceptionDate} onChange={(event) => setExceptionDate(event.target.value)} />
+        <select aria-label="Exception type" value={exceptionMode} onChange={(event) => setExceptionMode(event.target.value)}>
+          <option value="closed">Closed all day</option>
+          <option value="custom">Different hours</option>
+        </select>
+        {exceptionMode === "custom" && <>
+          <input type="time" aria-label="Exception opening time" value={exceptionOpen} onChange={(event) => setExceptionOpen(event.target.value)} />
+          <span className="hours-sep">to</span>
+          <input type="time" aria-label="Exception closing time" value={exceptionClose} onChange={(event) => setExceptionClose(event.target.value)} />
+        </>}
+        <button type="button" className="button" onClick={addException} disabled={!exceptionDate}>Add date</button>
+      </div>
     </div>
 
     <div className="row-meta" style={{ marginTop: 14 }}>

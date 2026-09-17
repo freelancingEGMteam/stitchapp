@@ -667,6 +667,8 @@ function BookingHoursEditor() {
   // Which month the date calendar is showing, and which date is being edited.
   const [calMonth, setCalMonth] = useState<number | null>(null);
   const [dateMode, setDateMode] = useState<"week" | "closed" | "custom">("week");
+  /** Taken slots per date, so the calendar shows real demand as well as hours. */
+  const [bookedByDate, setBookedByDate] = useState<Record<string, number>>({});
   const [dateOpen, setDateOpen] = useState("10:00");
   const [dateClose, setDateClose] = useState("14:00");
   // Days ticked in the regular-week picker, and the hours to give them.
@@ -689,6 +691,23 @@ function BookingHoursEditor() {
   useEffect(() => {
     if (calMonth === null) setCalMonth(monthIndexOf(dateKey(new Date())));
   }, [calMonth]);
+
+  // Which dates already have bookings, so the calendar reflects demand and not
+  // just opening hours. Declined requests do not hold a slot.
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    void supabase.rpc("studio_bookings").then(({ data }) => {
+      if (cancelled || !data) return;
+      const counts: Record<string, number> = {};
+      for (const row of data as BookingRow[]) {
+        if (row.status === "Declined") continue;
+        counts[row.slot_date] = (counts[row.slot_date] || 0) + 1;
+      }
+      setBookedByDate(counts);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -829,20 +848,22 @@ function BookingHoursEditor() {
           const inMonth = calMonth !== null && monthIndexOf(key) === calMonth;
           const hours = hoursForDate(key, draft);
           const custom = key in draft.exceptions;
+          const booked = bookedByDate[key] || 0;
           return <button
             key={key}
             type="button"
             disabled={!inMonth}
-            aria-label={`${prettyDayLong(key)} — ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}`}
-            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${pickedDates.includes(key) ? " picked" : ""}${inMonth ? "" : " outside"}`}
+            aria-label={`${prettyDayLong(key)} — ${hours ? `${formatSlot(hours.open)} to ${formatSlot(hours.close)}` : "closed"}${booked ? `, ${booked} booked` : ""}`}
+            className={`date-day${hours ? "" : " off"}${custom ? " custom" : ""}${pickedDates.includes(key) ? " picked" : ""}${booked ? " has-bookings" : ""}${inMonth ? "" : " outside"}`}
             onClick={() => toggleDate(key)}
-          >{parseDateKey(key).getDate()}</button>;
+          ><span className="date-day-num">{parseDateKey(key).getDate()}</span>{booked > 0 && <span className="date-day-booked">{booked}</span>}</button>;
         })}</div>
         <div className="date-legend">
           <span><i className="date-dot weekly" />Weekly hours</span>
           <span><i className="date-dot custom" />Own hours</span>
           <span><i className="date-dot off" />Closed</span>
           <span><i className="date-dot blocked" />Blocked by you</span>
+          <span><i className="date-dot booked" />Booked</span>
         </div>
       </div>
 

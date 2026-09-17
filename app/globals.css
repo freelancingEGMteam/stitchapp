@@ -406,6 +406,11 @@ a { color: inherit; text-decoration: none; }
 .date-dot.custom { background: var(--amber-soft); border-color: var(--amber); }
 .date-dot.off { background: #f4f1ec; border-color: transparent; }
 .date-dot.blocked { background: #f1e3df; border-color: var(--rose); }
+.date-dot.booked { background: var(--sage, #6f7d64); border-color: var(--sage, #6f7d64); }
+.date-day { position: relative; }
+.date-day-num { line-height: 1; }
+.date-day-booked { position: absolute; top: 3px; right: 4px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--sage, #6f7d64); color: #fff; font-size: 9px; font-weight: 700; line-height: 14px; text-align: center; }
+.date-day.has-bookings { box-shadow: inset 0 -3px 0 0 var(--sage, #6f7d64); }
 
 /* Regular-week multi-select, replacing the seven per-day rows */
 .week-picker { margin-top: 14px; }

@@ -144,6 +144,34 @@ const saveUpdate = async (client: TableWriter, table: string, row: Row, matchCol
   if (retry.error) console.error(`[stitchflow] saving ${label} failed:`, retry.error);
 };
 
+/**
+ * Merges records this browser still holds into what the database returned.
+ *
+ * The app has no delete, so a record that exists locally but not in the
+ * database was lost rather than removed on purpose -- a dropped write, or a
+ * migration that failed on one bad row. Putting it back turns the browser's
+ * cached copy into a safety net instead of just a stale duplicate.
+ *
+ * Returns the merged data plus the rows that need re-uploading.
+ */
+const mergeLocalOnly = (remote: AppData, local: AppData) => {
+  const keyToTable: [keyof AppData, string][] = [
+    ["customers", "customers"], ["jobs", "jobs"], ["leads", "leads"],
+    ["expenses", "expenses"], ["appointments", "appointments"], ["lifecycle", "customer_lifecycle"],
+  ];
+  const data: AppData = { ...remote };
+  const additions: { table: string; rows: Row[] }[] = [];
+
+  for (const [key, table] of keyToTable) {
+    const known = new Set((remote[key] as { id?: string }[]).map((row) => row.id));
+    const extras = (local[key] as unknown as { id?: string }[]).filter((row) => row?.id && !known.has(row.id));
+    if (extras.length === 0) continue;
+    (data[key] as unknown[]) = [...(remote[key] as unknown[]), ...extras];
+    additions.push({ table, rows: extras as unknown as Row[] });
+  }
+  return { data, additions };
+};
+
 const loadStoredData = (): AppData => {
   if (typeof window === "undefined") return cloneData();
   try {
@@ -1177,7 +1205,18 @@ export default function Home() {
       const next = { customers: (customers.data || []) as Customer[], jobs: (jobs.data || []) as Job[], leads: (leads.data || []) as Lead[], expenses: (expenses.data || []) as Expense[], appointments: (appointments.data || []) as Appointment[], lifecycle: (lifecycle.data || []) as Lifecycle[] };
       const remoteTotal = Object.values(next).reduce((sum, rows) => sum + rows.length, 0);
       if (remoteTotal > 0) {
-        setData(next);
+        // Anything this browser still holds that the database does not was lost
+        // rather than deliberately removed, so merge it back and re-upload it.
+        if (hasStoredData()) {
+          const { data: merged, additions } = mergeLocalOnly(next, loadStoredData());
+          setData(merged);
+          if (additions.length > 0) {
+            console.log("[stitchflow] restoring records missing from the database:", additions.map((a) => `${a.table}=${a.rows.length}`).join(" "));
+            await Promise.all(additions.map((a) => saveRows(client, a.table, a.rows.map((row) => nullTypedBlanks(row)), "upsert", a.table)));
+          }
+        } else {
+          setData(next);
+        }
         setCloudState("synced");
         return;
       }

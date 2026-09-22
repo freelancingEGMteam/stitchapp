@@ -226,6 +226,23 @@ const numeric = (value: number | string | undefined) => Number(value || 0);
 
 const isClosed = (status?: string) => ["paid", "delivered", "cancelled"].includes((status || "").toLowerCase());
 
+/**
+ * The next job number, taken from the highest number already in use.
+ *
+ * This used to be `JOB-${jobs.length + 1}`, which counts rows rather than
+ * numbers. The studio's earlier jobs are not numbered 1..n, so the first job
+ * added through the app landed on JOB-0058, which already existed -- and every
+ * job after it collided the same way. Reading the highest number instead
+ * cannot repeat one.
+ */
+const nextJobNumber = (jobs: Job[]) => {
+  const highest = jobs.reduce((max, job) => {
+    const digits = Number(String(job.job_id || "").replace(/\D/g, ""));
+    return Number.isFinite(digits) ? Math.max(max, digits) : max;
+  }, 0);
+  return `JOB-${String(highest + 1).padStart(4, "0")}`;
+};
+
 const isDueSoon = (job: Job) => {
   if (!job.delivery_date || isClosed(job.status)) return false;
   const due = new Date(`${job.delivery_date}T12:00:00`).getTime();
@@ -1074,7 +1091,7 @@ function NewJobView({ data, onCreate, go, initialCustomer }: { data: AppData; on
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const customer = data.customers.find((item) => item.customer_name === customerName);
-    onCreate({ id: `local-${Date.now()}`, job_id: `JOB-${String(data.jobs.length + 1).padStart(4, "0")}`, customer_id: customer?.id, customer_name: customerName || "New customer", job_details: details, status, amount_to_charge: Number(amount || 0), tip_received: Number(tip || 0), balance_due: Number(amount || 0), delivery_date: deliveryDate, payment_method: payment });
+    onCreate({ id: `local-${Date.now()}`, job_id: nextJobNumber(data.jobs), customer_id: customer?.id, customer_name: customerName || "New customer", job_details: details, status, amount_to_charge: Number(amount || 0), tip_received: Number(tip || 0), balance_due: Number(amount || 0), delivery_date: deliveryDate, payment_method: payment });
     go("jobs");
   };
   const selectedCustomer = data.customers.find((customer) => customer.customer_name === customerName);

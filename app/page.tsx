@@ -227,6 +227,29 @@ const numeric = (value: number | string | undefined) => Number(value || 0);
 const isClosed = (status?: string) => ["paid", "delivered", "cancelled"].includes((status || "").toLowerCase());
 
 /**
+ * Job notes are typed as free text. They already contain newlines and bullet
+ * characters, but rendering them inside a single <p> collapses the newlines,
+ * so a list arrives as one run-on paragraph. Split into lines and recognise
+ * the markers the studio actually types -- ●, ~, and a leading "- " -- so each
+ * point gets its own line and a real bullet.
+ *
+ * A "-" only counts at the start of a line and followed by a space, so ranges
+ * like "5-6 inches" are left alone.
+ */
+const detailLines = (text: string) =>
+  text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    // Some notes wrap a section in tildes ("~like this~"), so a marker can sit
+    // at the end of a line as well as the start. Drop it rather than show it.
+    .map((line) => line.trim().replace(/[~]\s*$/, "").trim())
+    .filter(Boolean)
+    .map((line) => {
+      const marker = /^(?:[●•▪‣◦*~]|-\s)\s*/.exec(line);
+      return marker ? { bullet: true, text: line.slice(marker[0].length).trim() } : { bullet: false, text: line };
+    });
+
+/**
  * Whether a job belongs to a customer.
  *
  * The id is authoritative. Two customers can share a name -- the studio has two
@@ -541,6 +564,15 @@ function CustomerDetailView({ customer, data, onBack, onSelectJob, onNewJob, onA
   </>;
 }
 
+/** Renders free-typed job text line by line, with bullet markers as bullets. */
+function DetailText({ text, className = "detail-copy" }: { text: string; className?: string }) {
+  return <div className={`${className} detail-lines`}>
+    {detailLines(text).map((line, index) => line.bullet
+      ? <div className="detail-bullet" key={index}><span aria-hidden="true">•</span><span>{line.text}</span></div>
+      : <p className="detail-line" key={index}>{line.text}</p>)}
+  </div>;
+}
+
 function JobDetailView({ job, data, onBack, onSelectJob, onEdit }: { job: Job; data: AppData; onBack: () => void; onSelectJob: (job: Job) => void; onEdit: (job: Job) => void }) {
   const customer = data.customers.find((item) => item.id === job.customer_id || item.customer_name === job.customer_name);
   const relatedJobs = customer ? data.jobs.filter((item) => jobBelongsTo(item, customer)) : [];
@@ -549,7 +581,7 @@ function JobDetailView({ job, data, onBack, onSelectJob, onEdit }: { job: Job; d
   return <>
     <DetailBack label="Jobs" onBack={onBack} />
      <div className="profile-hero card"><div className="avatar profile-avatar">{initials(job.customer_name)}</div><div className="profile-hero-main"><div className="eyebrow">Job profile</div><h1>{job.customer_name}</h1><div className="profile-contact"><span>{job.job_id ? `#${job.job_id}` : "Job"}</span>{job.delivery_date && <span><CalendarDays size={14} />Due {fullDate(job.delivery_date)}</span>}</div></div><div className="profile-actions"><StatusBadge status={job.status} /><button className="button small" onClick={() => setQuoteOpen(true)}>Create Quote</button><button className="button small" onClick={() => setInvoiceOpen(true)}><FileDown size={13} /> Export Invoice</button><button className="button small" onClick={() => onEdit(job)}><Pencil size={13} /> Edit</button></div></div>
-    <div className="detail-columns"><section className="card detail-main-card"><div className="detail-card-heading"><h3>Work details</h3><StatusBadge status={job.status} /></div><p className="detail-copy prominent">{job.job_details || "No job details added yet."}</p>{job.notes && <><div className="detail-label">Notes</div><p className="detail-copy">{job.notes}</p></>} {job.measurement_notes && <><div className="detail-label">Measurement notes</div><p className="detail-copy">{job.measurement_notes}</p></>}</section><section className="card"><h3>Payment</h3><div className="stat-line"><span>Amount</span><strong>{money(job.amount_to_charge)}</strong></div><div className="stat-line"><span>Deposit paid</span><strong>{money(job.deposit_paid)}</strong></div><div className="stat-line"><span>Balance due</span><strong>{money(job.balance_due)}</strong></div>{numeric(job.tip_received) > 0 && <div className="stat-line"><span>Tip</span><strong>{money(job.tip_received)}</strong></div>}<div className="stat-line"><span>Method</span><strong className="stat-small">{job.payment_method || "—"}</strong></div></section></div>
+    <div className="detail-columns"><section className="card detail-main-card"><div className="detail-card-heading"><h3>Work details</h3><StatusBadge status={job.status} /></div><DetailText text={job.job_details || "No job details added yet."} className="detail-copy prominent" />{job.notes && <><div className="detail-label">Notes</div><DetailText text={job.notes} /></>} {job.measurement_notes && <><div className="detail-label">Measurement notes</div><DetailText text={job.measurement_notes} /></>}</section><section className="card"><h3>Payment</h3><div className="stat-line"><span>Amount</span><strong>{money(job.amount_to_charge)}</strong></div><div className="stat-line"><span>Deposit paid</span><strong>{money(job.deposit_paid)}</strong></div><div className="stat-line"><span>Balance due</span><strong>{money(job.balance_due)}</strong></div>{numeric(job.tip_received) > 0 && <div className="stat-line"><span>Tip</span><strong>{money(job.tip_received)}</strong></div>}<div className="stat-line"><span>Method</span><strong className="stat-small">{job.payment_method || "—"}</strong></div></section></div>
     <section className="section"><SectionHeading title="Other jobs for this customer" />{relatedJobs.filter((item) => item.id !== job.id).length === 0 ? <div className="empty">This is the only job on file.</div> : <div className="stack">{relatedJobs.filter((item) => item.id !== job.id).map((item) => <JobRow key={item.id} job={item} onSelect={onSelectJob} />)}</div>}</section>
     {quoteOpen && <QuoteModal job={job} customer={customer} onClose={() => setQuoteOpen(false)} />}
     {invoiceOpen && <InvoiceModal job={job} customer={customer} onClose={() => setInvoiceOpen(false)} />}

@@ -227,6 +227,25 @@ const numeric = (value: number | string | undefined) => Number(value || 0);
 const isClosed = (status?: string) => ["paid", "delivered", "cancelled"].includes((status || "").toLowerCase());
 
 /**
+ * Whether a job belongs to a customer.
+ *
+ * The id is authoritative. Two customers can share a name -- the studio has two
+ * Saras, in different towns -- and matching on the name as well made each one
+ * show the other's job history. The name is only a fallback, for rows saved
+ * before a customer id was recorded.
+ */
+const jobBelongsTo = (job: Job, customer: Customer) =>
+  job.customer_id
+    ? job.customer_id === customer.id
+    : (job.customer_name || "").toLowerCase() === customer.customer_name.toLowerCase();
+
+/** The same rule for appointments and lifecycle records, which use linked_*. */
+const linkedTo = (record: { linked_id?: string; linked_name?: string }, customer: Customer) =>
+  record.linked_id
+    ? record.linked_id === customer.id
+    : (record.linked_name || "").toLowerCase() === customer.customer_name.toLowerCase();
+
+/**
  * The next job number, taken from the highest number already in use.
  *
  * This used to be `JOB-${jobs.length + 1}`, which counts rows rather than
@@ -483,7 +502,7 @@ function JobsView({ data, go, toast, onSelect, onEdit }: { data: AppData; go: (v
     const haystack = `${job.customer_name} ${job.job_details || ""} ${job.job_id || ""}`.toLowerCase();
     return haystack.includes(query.toLowerCase()) && (filter === "All" || statusLabel(job.status) === filter);
   });
-  const customerFor = (job: Job) => data.customers.find((customer) => customer.id === job.customer_id || customer.customer_name === job.customer_name);
+  const customerFor = (job: Job) => data.customers.find((customer) => (job.customer_id ? customer.id === job.customer_id : customer.customer_name === job.customer_name));
   return <><div className="page-heading"><div><h1>Jobs</h1><p>Track every alteration from intake to pickup.</p></div><div className="page-heading-actions"><button className="button primary" onClick={() => go("new-job")}><Plus size={15} /> New Job</button></div></div><div className="toolbar"><SearchBox value={query} onChange={setQuery} placeholder="Search by name or job details..." /><div className="filter-strip">{filters.map((item) => <button key={item} className={`filter-button ${filter === item ? "active" : ""}`} onClick={() => setFilter(item)}>{item}</button>)}</div></div><div className="stack">{jobs.length === 0 ? <div className="empty">No jobs match your search.</div> : jobs.map((job) => <JobRow key={job.id} job={job} onSelect={onSelect} onEdit={onEdit} onSendQuote={(selected) => setQuoteJob(selected)} onExportInvoice={(selected) => setInvoiceJob(selected)} />)}</div>{quoteJob && <QuoteModal job={quoteJob} customer={customerFor(quoteJob)} onClose={() => setQuoteJob(null)} />}{invoiceJob && <InvoiceModal job={invoiceJob} customer={customerFor(invoiceJob)} onClose={() => setInvoiceJob(null)} />}</>;
 }
 
@@ -504,9 +523,9 @@ function DetailBack({ label, onBack }: { label: string; onBack: () => void }) {
 }
 
 function CustomerDetailView({ customer, data, onBack, onSelectJob, onNewJob, onAddAppointment, onEdit }: { customer: Customer; data: AppData; onBack: () => void; onSelectJob: (job: Job) => void; onNewJob: (customer: Customer) => void; onAddAppointment: (customer: Customer) => void; onEdit: (customer: Customer) => void }) {
-  const jobs = data.jobs.filter((job) => job.customer_id === customer.id || job.customer_name === customer.customer_name);
-  const lifecycle = data.lifecycle.find((record) => record.linked_id === customer.id || record.linked_name === customer.customer_name);
-  const appointments = data.appointments.filter((appointment) => appointment.linked_id === customer.id || appointment.linked_name === customer.customer_name);
+  const jobs = data.jobs.filter((job) => jobBelongsTo(job, customer));
+  const lifecycle = data.lifecycle.find((record) => linkedTo(record, customer));
+  const appointments = data.appointments.filter((appointment) => linkedTo(appointment, customer));
   const totalSpend = jobs.filter((job) => (job.status || "").toLowerCase() === "paid").reduce((sum, job) => sum + numeric(job.amount_to_charge), 0);
   const handleJobClick = (job: Job) => { if (statusLabel(job.status) === "New Job") onNewJob(customer); else onSelectJob(job); };
   const [quoteJob, setQuoteJob] = useState<Job | null>(null);
@@ -524,7 +543,7 @@ function CustomerDetailView({ customer, data, onBack, onSelectJob, onNewJob, onA
 
 function JobDetailView({ job, data, onBack, onSelectJob, onEdit }: { job: Job; data: AppData; onBack: () => void; onSelectJob: (job: Job) => void; onEdit: (job: Job) => void }) {
   const customer = data.customers.find((item) => item.id === job.customer_id || item.customer_name === job.customer_name);
-  const relatedJobs = customer ? data.jobs.filter((item) => item.customer_id === customer.id || item.customer_name === customer.customer_name) : [];
+  const relatedJobs = customer ? data.jobs.filter((item) => jobBelongsTo(item, customer)) : [];
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   return <>
@@ -1310,7 +1329,7 @@ export default function Home() {
   const completeAppointment = (appointment: Appointment) => { const completed = { ...appointment, status: "Completed" }; setData((current) => ({ ...current, appointments: current.appointments.map((item) => item.id === appointment.id ? completed : item) })); toast("Appointment marked completed."); if (supabase) void saveUpdate(supabase, "appointments", { status: "Completed" }, "id", appointment.id, "appointment"); };
   const updateCustomer = (updated: Customer) => {
     const previous = data.customers.find((item) => item.id === updated.id);
-    setData((current) => ({ ...current, customers: current.customers.map((item) => item.id === updated.id ? updated : item), jobs: current.jobs.map((job) => job.customer_id === updated.id || job.customer_name === previous?.customer_name ? { ...job, customer_name: updated.customer_name, phone_number: updated.phone_number, email: updated.email } : job) }));
+    setData((current) => ({ ...current, customers: current.customers.map((item) => item.id === updated.id ? updated : item), jobs: previous ? current.jobs.map((job) => (jobBelongsTo(job, previous) ? { ...job, customer_name: updated.customer_name, phone_number: updated.phone_number, email: updated.email } : job)) : current.jobs }));
     if (supabase) {
       void saveUpdate(supabase, "customers", { ...updated, updated_date: new Date().toISOString() }, "id", updated.id, "customer");
       void saveUpdate(supabase, "jobs", { customer_name: updated.customer_name, phone_number: updated.phone_number, updated_date: new Date().toISOString() }, "customer_id", updated.id, "job");

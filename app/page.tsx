@@ -1280,7 +1280,21 @@ export default function Home() {
   const closeDetail = () => { setDetail(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const toast = (message: string) => { setToastText(message); window.setTimeout(() => setToastText(""), 2800); };
   const saveNew = (table: string, row: Row, label: string) => { if (supabase) void saveRows(supabase, table, [nullTypedBlanks(row)], "insert", label); };
-  const createJob = (job: Job) => { setData((current) => ({ ...current, jobs: [job, ...current.jobs] })); toast("Job saved to your studio workspace."); saveNew("jobs", job, "job"); };
+  const createJob = (job: Job) => {
+    setData((current) => ({ ...current, jobs: [job, ...current.jobs] }));
+    toast("Job saved to your studio workspace.");
+    if (!supabase) return;
+    const client = supabase;
+    // Send no number, so the database assigns one from its own sequence and a
+    // duplicate is impossible even with two tabs open. Then adopt what it gave.
+    void saveRows(client, "jobs", [nullTypedBlanks({ ...job, job_id: null })], "insert", "job").then(async (result) => {
+      if (result.saved === 0) return;
+      const { data } = await client.from("jobs").select("job_id").eq("id", job.id).maybeSingle();
+      if (data?.job_id) {
+        setData((current) => ({ ...current, jobs: current.jobs.map((item) => (item.id === job.id ? { ...item, job_id: (data as { job_id: string }).job_id } : item)) }));
+      }
+    });
+  };
   const createExpense = (expense: Expense) => { setData((current) => ({ ...current, expenses: [expense, ...current.expenses] })); toast("Expense added to your studio finances."); saveNew("expenses", expense, "expense"); };
   const createWaitingEntry = (entry: WaitingEntry) => { setWaitingList((current) => [entry, ...current]); toast("Customer added to the waiting list."); };
   const createAppointment = (appointment: Appointment) => { setData((current) => ({ ...current, appointments: [appointment, ...current.appointments] })); toast("Appointment added to your studio calendar."); saveNew("appointments", appointment, "appointment"); };

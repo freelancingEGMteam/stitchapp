@@ -116,6 +116,7 @@ alter table customers add column if not exists is_sample boolean;
 alter table customers add column if not exists created_by text;
 alter table customers add column if not exists created_by_id text;
 
+alter table jobs add column if not exists email text;
 alter table jobs add column if not exists hem_length text;
 alter table jobs add column if not exists inseam text;
 alter table jobs add column if not exists bust text;

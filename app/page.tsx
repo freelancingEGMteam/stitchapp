@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Clock3,
   FileDown,
+  Image as ImageIcon,
   LayoutDashboard,
   ListFilter,
   Menu,
@@ -225,6 +226,37 @@ const loadStoredCategories = (): string[] => {
 const numeric = (value: number | string | undefined) => Number(value || 0);
 
 const isClosed = (status?: string) => ["paid", "delivered", "cancelled"].includes((status || "").toLowerCase());
+
+/** Receipts are photos of paper; anything larger is a mistake or a raw file. */
+const RECEIPT_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Uploads a receipt image and returns its storage path.
+ *
+ * The bucket is private, so the record stores the PATH rather than a URL: a
+ * signed URL expires, and storing one would leave a dead link in the expense
+ * a week later. openReceipt mints a fresh one whenever it is viewed.
+ */
+const uploadReceipt = async (expenseId: string, file: File): Promise<string | null> => {
+  if (!supabase) return null;
+  const extension = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${expenseId}/${Date.now()}.${extension}`;
+  const { error } = await supabase.storage.from("receipts").upload(path, file, { contentType: file.type || "image/jpeg", upsert: true });
+  if (error) { console.error("[stitchflow] could not upload the receipt:", error); return null; }
+  return path;
+};
+
+/** Opens a receipt, whichever kind of reference is stored. */
+const openReceipt = async (reference: string) => {
+  // Receipts carried over from the app this was built from are full URLs to
+  // somebody else's storage; only newer ones are paths in our own bucket.
+  // Asking for a signed URL on an external link would simply fail.
+  if (/^https?:\/\//i.test(reference)) { window.open(reference, "_blank", "noopener"); return; }
+  if (!supabase) return;
+  const { data, error } = await supabase.storage.from("receipts").createSignedUrl(reference, 60 * 10);
+  if (error || !data?.signedUrl) { console.error("[stitchflow] could not open the receipt:", error); return; }
+  window.open(data.signedUrl, "_blank", "noopener");
+};
 
 /**
  * Job notes are typed as free text. They already contain newlines and bullet
@@ -496,9 +528,37 @@ function EditAppointmentModal({ appointment, customers, onClose, onSave }: { app
 
 function EditExpenseModal({ expense, categories, onClose, onSave }: { expense: Expense; categories: string[]; onClose: () => void; onSave: (expense: Expense) => void }) {
   const [draft, setDraft] = useState<Expense>({ ...expense });
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [receiptError, setReceiptError] = useState("");
   const update = (key: keyof Expense, value: string | number) => setDraft((current) => ({ ...current, [key]: value }));
-  const submit = (event: FormEvent) => { event.preventDefault(); onSave(draft); };
-  return <EditModalShell title="Edit Expense" ariaLabel="edit expense" onClose={onClose} onSubmit={submit}><div className="field"><label htmlFor="edit-expense-note">Description</label><input id="edit-expense-note" value={draft.note || ""} onChange={(event) => update("note", event.target.value)} required /></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-amount">Amount</label><input id="edit-expense-amount" type="number" min="0.01" step="0.01" value={draft.amount ?? ""} onChange={(event) => update("amount", event.target.value)} required /></div><div className="field"><label htmlFor="edit-expense-date">Date</label><input id="edit-expense-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-category">Category</label><select id="edit-expense-category" value={draft.category || "Other"} onChange={(event) => update("category", event.target.value)}>{Array.from(new Set([...categories, draft.category || "Other"])).map((name) => <option key={name}>{name}</option>)}</select></div><div className="field"><label htmlFor="edit-expense-job">Job ID</label><input id="edit-expense-job" value={draft.job_id || ""} onChange={(event) => update("job_id", event.target.value)} placeholder="Optional job ID" /></div></div></EditModalShell>;
+
+  const chooseReceipt = (file: File | null) => {
+    setReceiptError("");
+    if (!file) { setReceipt(null); setPreview(""); return; }
+    if (!file.type.startsWith("image/")) { setReceiptError("That file is not an image."); return; }
+    if (file.size > RECEIPT_MAX_BYTES) { setReceiptError(`Images need to be under ${RECEIPT_MAX_BYTES / 1024 / 1024} MB.`); return; }
+    setReceipt(file);
+    setPreview(URL.createObjectURL(file));
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    // Upload only when a new photo was picked, so editing the amount does not
+    // re-upload the receipt that is already attached.
+    if (receipt) {
+      setBusy(true);
+      const path = await uploadReceipt(draft.id, receipt);
+      setBusy(false);
+      if (!path) { setReceiptError("The receipt could not be uploaded. Try again, or leave the existing one as it is."); return; }
+      onSave({ ...draft, receipt_url: path });
+      return;
+    }
+    onSave(draft);
+  };
+
+  return <EditModalShell title="Edit Expense" ariaLabel="edit expense" onClose={onClose} onSubmit={submit} submitLabel={busy ? "Uploading…" : "Save changes"}><div className="field"><label htmlFor="edit-expense-note">Description</label><input id="edit-expense-note" value={draft.note || ""} onChange={(event) => update("note", event.target.value)} required /></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-amount">Amount</label><input id="edit-expense-amount" type="number" min="0.01" step="0.01" value={draft.amount ?? ""} onChange={(event) => update("amount", event.target.value)} required /></div><div className="field"><label htmlFor="edit-expense-date">Date</label><input id="edit-expense-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-category">Category</label><select id="edit-expense-category" value={draft.category || "Other"} onChange={(event) => update("category", event.target.value)}>{Array.from(new Set([...categories, draft.category || "Other"])).map((name) => <option key={name}>{name}</option>)}</select></div><div className="field"><label htmlFor="edit-expense-job">Job ID</label><input id="edit-expense-job" value={draft.job_id || ""} onChange={(event) => update("job_id", event.target.value)} placeholder="Optional job ID" /></div></div><div className="field"><label htmlFor="edit-expense-receipt">Receipt photo</label><input id="edit-expense-receipt" type="file" accept="image/*" onChange={(event) => chooseReceipt(event.target.files?.[0] || null)} />{draft.receipt_url && !preview && <button type="button" className="button small" style={{ marginTop: 8 }} onClick={() => void openReceipt(draft.receipt_url as string)}><ImageIcon size={13} /> View current receipt</button>}{preview && <div className="receipt-preview"><img src={preview} alt="New receipt preview" /><button type="button" className="button small" onClick={() => chooseReceipt(null)}><X size={13} /> Keep the existing one</button></div>}{receiptError && <div className="booking-alert error" style={{ marginTop: 10 }}>{receiptError}</div>}</div></EditModalShell>;
 }
 
 function EditWaitingModal({ entry, customers, onClose, onSave }: { entry: WaitingEntry; customers: Customer[]; onClose: () => void; onSave: (entry: WaitingEntry) => void }) {
@@ -753,7 +813,7 @@ function FinancesView({ data, go, onEditExpense, onManageCategories, toast }: { 
     URL.revokeObjectURL(url);
     toast("Balance sheet exported as CSV.");
   };
-  return <><div className="page-heading"><div><h1>Balance Sheet</h1><p>All Time · Generated {generated}</p></div><button className="button primary" onClick={() => go("new-expense")}><Plus size={15} /> Add Expense</button></div><div className="grid-2"><div className="card"><div className="eyebrow">Total Revenue</div><div className="metric-value">{money(revenue)}</div><div className="stat-line"><span>Total Expenses</span><strong>{money(expenses)}</strong></div><div className="stat-line net"><span>Net Profit</span><strong>{money(netProfit)}</strong></div></div><div className="card"><h3>Quick actions</h3><button className="button" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }} onClick={exportFinancials}><span><FileDown size={15} /> Export financials</span><ArrowUpRight size={14} /></button><button className="button" style={{ width: "100%", justifyContent: "space-between" }} onClick={onManageCategories}><span><Tag size={15} /> Manage categories</span><ArrowUpRight size={14} /></button></div></div><section className="section"><SectionHeading title="Revenue vs Expenses" /><FinanceChart data={data} /></section><section className="section"><SectionHeading title="Recent Expenses" /><div className="stack">{data.expenses.length === 0 ? <div className="empty">No expenses recorded.</div> : data.expenses.map((expense) => <div className="expense-row" key={expense.id}><div className="metric-icon rose"><CircleDollarSign size={15} /></div><div className="expense-row-main"><div className="row-title">{expense.note || "Expense"}</div><div className="row-meta">{shortDate(expense.date)} · {expense.category || "Other"}</div></div><strong>{money(expense.amount)}</strong><button className="button small" aria-label={`Edit ${expense.note || "expense"}`} onClick={() => onEditExpense(expense)}><Pencil size={13} /> Edit</button></div>)}</div></section></>;
+  return <><div className="page-heading"><div><h1>Balance Sheet</h1><p>All Time · Generated {generated}</p></div><button className="button primary" onClick={() => go("new-expense")}><Plus size={15} /> Add Expense</button></div><div className="grid-2"><div className="card"><div className="eyebrow">Total Revenue</div><div className="metric-value">{money(revenue)}</div><div className="stat-line"><span>Total Expenses</span><strong>{money(expenses)}</strong></div><div className="stat-line net"><span>Net Profit</span><strong>{money(netProfit)}</strong></div></div><div className="card"><h3>Quick actions</h3><button className="button" style={{ width: "100%", justifyContent: "space-between", marginBottom: 8 }} onClick={exportFinancials}><span><FileDown size={15} /> Export financials</span><ArrowUpRight size={14} /></button><button className="button" style={{ width: "100%", justifyContent: "space-between" }} onClick={onManageCategories}><span><Tag size={15} /> Manage categories</span><ArrowUpRight size={14} /></button></div></div><section className="section"><SectionHeading title="Revenue vs Expenses" /><FinanceChart data={data} /></section><section className="section"><SectionHeading title="Recent Expenses" /><div className="stack">{data.expenses.length === 0 ? <div className="empty">No expenses recorded.</div> : data.expenses.map((expense) => <div className="expense-row" key={expense.id}><div className="metric-icon rose"><CircleDollarSign size={15} /></div><div className="expense-row-main"><div className="row-title">{expense.note || "Expense"}</div><div className="row-meta">{shortDate(expense.date)} · {expense.category || "Other"}</div></div><strong>{money(expense.amount)}</strong>{expense.receipt_url && <button className="button small" aria-label={`View receipt for ${expense.note || "expense"}`} onClick={() => void openReceipt(expense.receipt_url as string)}><ImageIcon size={13} /> Receipt</button>}<button className="button small" aria-label={`Edit ${expense.note || "expense"}`} onClick={() => onEditExpense(expense)}><Pencil size={13} /> Edit</button></div>)}</div></section></>;
 }
 
 function WaitingView({ entries, customers, go, onEdit }: { entries: WaitingEntry[]; customers: Customer[]; go: (view: View) => void; onEdit: (entry: WaitingEntry) => void }) {
@@ -1161,12 +1221,37 @@ function NewExpenseView({ categories, onCreate, go }: { categories: string[]; on
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [category, setCategory] = useState(() => categories[0] || "Other");
-  const submit = (event: FormEvent) => {
+  const [receipt, setReceipt] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [receiptError, setReceiptError] = useState("");
+
+  const chooseReceipt = (file: File | null) => {
+    setReceiptError("");
+    if (!file) { setReceipt(null); setPreview(""); return; }
+    if (!file.type.startsWith("image/")) { setReceiptError("That file is not an image."); return; }
+    if (file.size > RECEIPT_MAX_BYTES) { setReceiptError(`Images need to be under ${RECEIPT_MAX_BYTES / 1024 / 1024} MB.`); return; }
+    setReceipt(file);
+    setPreview(URL.createObjectURL(file));
+  };
+
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    onCreate({ id: `local-expense-${Date.now()}`, note, amount: Number(amount), date, category });
+    const id = `local-expense-${Date.now()}`;
+    let path = "";
+    if (receipt) {
+      setBusy(true);
+      path = (await uploadReceipt(id, receipt)) || "";
+      setBusy(false);
+      // Better to stop than to save the expense and quietly drop the photo the
+      // studio thought it had attached.
+      if (!path) { setReceiptError("The receipt could not be uploaded. Try again, or remove the photo to save without it."); return; }
+    }
+    onCreate({ id, note, amount: Number(amount), date, category, receipt_url: path });
     go("finances");
   };
-  return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((name) => <option key={name}>{name}</option>)}</select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Expense</button></div></form></>;
+
+  return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((name) => <option key={name}>{name}</option>)}</select></div><div className="field full"><label htmlFor="expense-receipt">Receipt photo</label><input id="expense-receipt" type="file" accept="image/*" onChange={(event) => chooseReceipt(event.target.files?.[0] || null)} /><p className="row-meta" style={{ margin: "6px 0 0" }}>A photo of the receipt, optional. Stored privately with this expense.</p>{preview && <div className="receipt-preview"><img src={preview} alt="Receipt preview" /><button type="button" className="button small" onClick={() => chooseReceipt(null)}><X size={13} /> Remove photo</button></div>}{receiptError && <div className="booking-alert error" style={{ marginTop: 10 }}>{receiptError}</div>}</div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary" disabled={busy}><Plus size={15} /> {busy ? "Uploading…" : "Save Expense"}</button></div></form></>;
 }
 
 function NewLeadView({ data, onCreate, go }: { data: AppData; onCreate: (lead: Lead) => void; go: (view: View) => void }) {

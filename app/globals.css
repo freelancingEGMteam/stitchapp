@@ -100,8 +100,10 @@ a { color: inherit; text-decoration: none; }
 .clickable:hover, .clickable:focus-visible { border-color: #d9bbb6; box-shadow: 0 8px 18px rgba(62,48,39,.08); transform: translateY(-1px); outline: none; }
 .job-row-main, .customer-row-main, .lead-row-main, .appointment-row-main, .expense-row-main, .lifecycle-main, .waiting-row-main { min-width: 0; flex: 1; }
 /* Expense receipt attachment */
-.receipt-preview { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.receipt-preview img { width: 88px; height: 88px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-soft); }
+.receipt-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.receipt-preview { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.receipt-preview img { width: 96px; height: 96px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-soft); }
+.receipt-preview-side { display: grid; gap: 8px; }
 .row-title { font-weight: 650; font-size: 14px; }
 .row-description { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-meta { color: var(--muted); font-size: 12px; margin-top: 5px; }

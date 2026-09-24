@@ -1,12 +1,13 @@
 "use client";
 
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClock,
   ArrowUpRight,
   ArrowLeft,
   CalendarCheck,
   CalendarDays,
+  Camera,
   CheckCircle2,
   ChevronRight,
   CircleDollarSign,
@@ -247,8 +248,7 @@ const uploadReceipt = async (expenseId: string, file: File): Promise<string | nu
 };
 
 /** Opens a receipt, whichever kind of reference is stored. */
-const openReceipt = async (reference: string) => {
-  // Receipts carried over from the app this was built from are full URLs to
+const openReceipt = async (reference: string) => {  // Receipts carried over from the app this was built from are full URLs to
   // somebody else's storage; only newer ones are paths in our own bucket.
   // Asking for a signed URL on an external link would simply fail.
   if (/^https?:\/\//i.test(reference)) { window.open(reference, "_blank", "noopener"); return; }
@@ -558,7 +558,7 @@ function EditExpenseModal({ expense, categories, onClose, onSave }: { expense: E
     onSave(draft);
   };
 
-  return <EditModalShell title="Edit Expense" ariaLabel="edit expense" onClose={onClose} onSubmit={submit} submitLabel={busy ? "Uploading…" : "Save changes"}><div className="field"><label htmlFor="edit-expense-note">Description</label><input id="edit-expense-note" value={draft.note || ""} onChange={(event) => update("note", event.target.value)} required /></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-amount">Amount</label><input id="edit-expense-amount" type="number" min="0.01" step="0.01" value={draft.amount ?? ""} onChange={(event) => update("amount", event.target.value)} required /></div><div className="field"><label htmlFor="edit-expense-date">Date</label><input id="edit-expense-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-category">Category</label><select id="edit-expense-category" value={draft.category || "Other"} onChange={(event) => update("category", event.target.value)}>{Array.from(new Set([...categories, draft.category || "Other"])).map((name) => <option key={name}>{name}</option>)}</select></div><div className="field"><label htmlFor="edit-expense-job">Job ID</label><input id="edit-expense-job" value={draft.job_id || ""} onChange={(event) => update("job_id", event.target.value)} placeholder="Optional job ID" /></div></div><div className="field"><label htmlFor="edit-expense-receipt">Receipt photo</label><input id="edit-expense-receipt" type="file" accept="image/*" onChange={(event) => chooseReceipt(event.target.files?.[0] || null)} />{draft.receipt_url && !preview && <button type="button" className="button small" style={{ marginTop: 8 }} onClick={() => void openReceipt(draft.receipt_url as string)}><ImageIcon size={13} /> View current receipt</button>}{preview && <div className="receipt-preview"><img src={preview} alt="New receipt preview" /><button type="button" className="button small" onClick={() => chooseReceipt(null)}><X size={13} /> Keep the existing one</button></div>}{receiptError && <div className="booking-alert error" style={{ marginTop: 10 }}>{receiptError}</div>}</div></EditModalShell>;
+  return <EditModalShell title="Edit Expense" ariaLabel="edit expense" onClose={onClose} onSubmit={submit} submitLabel={busy ? "Uploading…" : "Save changes"}><div className="field"><label htmlFor="edit-expense-note">Description</label><input id="edit-expense-note" value={draft.note || ""} onChange={(event) => update("note", event.target.value)} required /></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-amount">Amount</label><input id="edit-expense-amount" type="number" min="0.01" step="0.01" value={draft.amount ?? ""} onChange={(event) => update("amount", event.target.value)} required /></div><div className="field"><label htmlFor="edit-expense-date">Date</label><input id="edit-expense-date" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} required /></div></div><div className="modal-two"><div className="field"><label htmlFor="edit-expense-category">Category</label><select id="edit-expense-category" value={draft.category || "Other"} onChange={(event) => update("category", event.target.value)}>{Array.from(new Set([...categories, draft.category || "Other"])).map((name) => <option key={name}>{name}</option>)}</select></div><div className="field"><label htmlFor="edit-expense-job">Job ID</label><input id="edit-expense-job" value={draft.job_id || ""} onChange={(event) => update("job_id", event.target.value)} placeholder="Optional job ID" /></div></div><div className="field"><label>Receipt photo</label><ReceiptPicker file={receipt} preview={preview} error={receiptError} busy={busy} current={draft.receipt_url} onPick={chooseReceipt} onViewCurrent={() => void openReceipt(draft.receipt_url as string)} /></div></EditModalShell>;
 }
 
 function EditWaitingModal({ entry, customers, onClose, onSave }: { entry: WaitingEntry; customers: Customer[]; onClose: () => void; onSave: (entry: WaitingEntry) => void }) {
@@ -1216,6 +1216,53 @@ function NewJobView({ data, onCreate, go, initialCustomer }: { data: AppData; on
   return <><div className="page-heading"><div><h1>Add Job</h1><p>Capture the work, price, and pickup date in one place.</p></div><button className="button" onClick={() => go("jobs")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field"><label htmlFor="customer">Customer</label><input id="customer" list="job-customers" value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Search customers..." required /><datalist id="job-customers">{data.customers.map((customer) => <option key={customer.id} value={customer.customer_name}>{customer.phone_number || customer.email || ""}</option>)}</datalist>{selectedCustomer && <div className="autocomplete-meta">{selectedCustomer.phone_number || "No phone"}{selectedCustomer.email ? ` · ${selectedCustomer.email}` : ""}{selectedCustomer.address ? ` · ${selectedCustomer.address}` : ""}</div>}</div><div className="field"><label htmlFor="status">Status</label><select id="status" value={status} onChange={(event) => setStatus(event.target.value)}><option>New Job</option><option>In Progress</option><option>Ready for Pickup</option><option>Delivered</option><option>Paid</option></select></div><div className="field full"><label htmlFor="details">Job details</label><textarea id="details" value={details} onChange={(event) => setDetails(event.target.value)} placeholder="Describe the alterations or project..." required /></div><div className="field"><label htmlFor="amount">Amount to charge</label><input id="amount" type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" /></div><div className="field"><label htmlFor="tip">Tip</label><input id="tip" type="number" min="0" step="0.01" value={tip} onChange={(event) => setTip(event.target.value)} placeholder="0.00" /></div><div className="field"><label htmlFor="delivery">Delivery date</label><input id="delivery" type="date" value={deliveryDate} onChange={(event) => setDeliveryDate(event.target.value)} /></div><div className="field"><label htmlFor="payment">Payment method</label><select id="payment" value={payment} onChange={(event) => setPayment(event.target.value)}><option>Cash</option><option>Card</option><option>Check</option><option>Venmo</option><option>Other</option></select></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("jobs")}>Cancel</button><button type="submit" className="button primary"><Plus size={15} /> Save Job</button></div></form></>;
 }
 
+/**
+ * Receipt picker, shared by Add and Edit expense.
+ *
+ * Two separate inputs on purpose. "Take photo" carries capture="environment",
+ * which makes a phone open the camera directly, while "Choose photo" has no
+ * capture and opens the gallery. One input cannot do both -- capture forces
+ * the camera and takes the picker away -- so the studio would lose the ability
+ * to attach a photo it already has.
+ *
+ * Desktop browsers ignore capture entirely, so both buttons there just open
+ * the normal file dialog.
+ */
+function ReceiptPicker({ file, preview, error, busy, current, onPick, onViewCurrent }: {
+  file: File | null;
+  preview: string;
+  error: string;
+  busy: boolean;
+  current?: string | null;
+  onPick: (file: File | null) => void;
+  onViewCurrent?: () => void;
+}) {
+  const camera = useRef<HTMLInputElement>(null);
+  const library = useRef<HTMLInputElement>(null);
+  const choose = (event: ChangeEvent<HTMLInputElement>) => {
+    onPick(event.target.files?.[0] || null);
+    // Reset so picking the same file twice still fires a change event.
+    event.target.value = "";
+  };
+  return <>
+    <div className="receipt-actions">
+      <button type="button" className="button" disabled={busy} onClick={() => camera.current?.click()}><Camera size={15} /> Take photo</button>
+      <button type="button" className="button" disabled={busy} onClick={() => library.current?.click()}><ImageIcon size={15} /> Choose photo</button>
+      {current && !preview && onViewCurrent && <button type="button" className="button" disabled={busy} onClick={onViewCurrent}><ImageIcon size={15} /> View current receipt</button>}
+    </div>
+    <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={choose} />
+    <input ref={library} type="file" accept="image/*" hidden onChange={choose} />
+    {preview && <div className="receipt-preview">
+      <img src={preview} alt="Receipt preview" />
+      <div className="receipt-preview-side">
+        <div className="row-meta">{file ? `${file.name} · ${Math.round(file.size / 1024)} KB` : "New photo"}</div>
+        <button type="button" className="button small" disabled={busy} onClick={() => onPick(null)}><X size={13} /> {current ? "Keep the existing one" : "Remove photo"}</button>
+      </div>
+    </div>}
+    {error && <div className="booking-alert error" style={{ marginTop: 10 }}>{error}</div>}
+  </>;
+}
+
 function NewExpenseView({ categories, onCreate, go }: { categories: string[]; onCreate: (expense: Expense) => void; go: (view: View) => void }) {
   const [note, setNote] = useState("");
   const [amount, setAmount] = useState("");
@@ -1251,7 +1298,7 @@ function NewExpenseView({ categories, onCreate, go }: { categories: string[]; on
     go("finances");
   };
 
-  return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((name) => <option key={name}>{name}</option>)}</select></div><div className="field full"><label htmlFor="expense-receipt">Receipt photo</label><input id="expense-receipt" type="file" accept="image/*" onChange={(event) => chooseReceipt(event.target.files?.[0] || null)} /><p className="row-meta" style={{ margin: "6px 0 0" }}>A photo of the receipt, optional. Stored privately with this expense.</p>{preview && <div className="receipt-preview"><img src={preview} alt="Receipt preview" /><button type="button" className="button small" onClick={() => chooseReceipt(null)}><X size={13} /> Remove photo</button></div>}{receiptError && <div className="booking-alert error" style={{ marginTop: 10 }}>{receiptError}</div>}</div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary" disabled={busy}><Plus size={15} /> {busy ? "Uploading…" : "Save Expense"}</button></div></form></>;
+  return <><div className="page-heading"><div><h1>Add Expense</h1><p>Record a studio cost so your finances stay up to date.</p></div><button className="button" onClick={() => go("finances")}>Cancel</button></div><form className="card form-card" onSubmit={submit}><div className="form-grid"><div className="field full"><label htmlFor="expense-note">Description</label><input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Silk lining for bridal gown" required /></div><div className="field"><label htmlFor="expense-amount">Amount</label><input id="expense-amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></div><div className="field"><label htmlFor="expense-date">Date</label><input id="expense-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div><div className="field"><label htmlFor="expense-category">Category</label><select id="expense-category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((name) => <option key={name}>{name}</option>)}</select></div><div className="field full"><label>Receipt photo</label><ReceiptPicker file={receipt} preview={preview} error={receiptError} busy={busy} onPick={chooseReceipt} /><p className="row-meta" style={{ margin: "10px 0 0" }}>Optional. Stored privately with this expense.</p></div></div><div className="form-actions"><button type="button" className="button" onClick={() => go("finances")}>Cancel</button><button type="submit" className="button primary" disabled={busy}><Plus size={15} /> {busy ? "Uploading…" : "Save Expense"}</button></div></form></>;
 }
 
 function NewLeadView({ data, onCreate, go }: { data: AppData; onCreate: (lead: Lead) => void; go: (view: View) => void }) {
